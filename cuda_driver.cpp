@@ -464,7 +464,8 @@ int main() {
   LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
                         dual_edge_length, tangent_orientation, nabla2_vec);
   lapl.run();
-  return 0;
+  lapl.CopyResultToHost(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
+                        dual_edge_length, tangent_orientation, nabla2_vec);
 
   if(dbg_out) {
     dumpCellField("laplICONatlas_div.txt", mesh, wrapper, div_vec, level);

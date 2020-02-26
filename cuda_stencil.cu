@@ -147,7 +147,6 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
                     cellToEdge_);
 }
 
-// TODO: use interface instead of atlas fields
 LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
                                    const atlasInterface::Field<double>& vec,
                                    const atlasInterface::Field<double>& rotVec,
@@ -212,4 +211,30 @@ void LaplacianStencil::run() {
                             mesh_.EdgeToCell(), divVec_, dual_edge_length_, mesh_.NumEdges(),
                             nabla2vec_);
   }
+}
+
+void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec,
+                                        atlasInterface::Field<double>& rotVec,
+                                        atlasInterface::SparseDimension<double>& geofacRot,
+                                        atlasInterface::Field<double>& divVec,
+                                        atlasInterface::SparseDimension<double>& geofacDiv,
+                                        atlasInterface::Field<double>& primal_edge_length,
+                                        atlasInterface::Field<double>& dual_edge_length,
+                                        atlasInterface::Field<double>& tangent_orientation,
+                                        atlasInterface::Field<double>& nabla2vec) const {
+  cudaMemcpy(vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(geofacRot.data(), geofacRot_, sizeof(double) * geofacRot.numElements(),
+             cudaMemcpyDeviceToHost);
+  cudaMemcpy(divVec.data(), divVec_, sizeof(double) * divVec.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(geofacDiv.data(), geofacDiv_, sizeof(double) * geofacDiv.numElements(),
+             cudaMemcpyDeviceToHost);
+  cudaMemcpy(primal_edge_length_, primal_edge_length.data(),
+             sizeof(double) * primal_edge_length.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(dual_edge_length.data(), dual_edge_length_,
+             sizeof(double) * dual_edge_length.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(tangent_orientation.data(), tangent_orientation_,
+             sizeof(double) * tangent_orientation.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy(nabla2vec.data(), nabla2vec_, sizeof(double) * nabla2vec.numElements(),
+             cudaMemcpyDeviceToHost);
 }

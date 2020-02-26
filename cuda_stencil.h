@@ -87,4 +87,14 @@ public:
                    const atlasInterface::Field<double>& tangent_orientation,
                    const atlasInterface::Field<double>& nabla2vec);
   void run();
+
+  void CopyResultToHost(const atlasInterface::Field<double>& vec,
+                        atlasInterface::Field<double>& rotVec,
+                        atlasInterface::SparseDimension<double>& geofacRot,
+                        atlasInterface::Field<double>& divVec,
+                        atlasInterface::SparseDimension<double>& geofacDiv,
+                        atlasInterface::Field<double>& primal_edge_length,
+                        atlasInterface::Field<double>& dual_edge_length,
+                        atlasInterface::Field<double>& tangent_orientation,
+                        atlasInterface::Field<double>& nabla2vec) const;
 };
