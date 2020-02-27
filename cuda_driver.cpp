@@ -114,6 +114,15 @@ int main() {
   atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
   atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
   debugDump(mesh, "atlasMesh");
+  // {
+  //   const auto& conn = mesh.nodes().edge_connectivity();
+  //   auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
+  //   for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+  //     if(conn.cols(nodeIdx) != 6) {
+  //       printf("%f %f %d\n", xy(nodeIdx, 0), xy(nodeIdx, 1), conn.cols(nodeIdx));
+  //     }
+  //   }
+  // }
 
   const bool skewToEquilateral = true;
   AtlasToCartesian wrapper(mesh);
@@ -463,6 +472,7 @@ int main() {
 
   LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
                         dual_edge_length, tangent_orientation, nabla2_vec);
+  return 0;
   lapl.run();
   lapl.CopyResultToHost(vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
                         dual_edge_length, tangent_orientation, nabla2_vec);
