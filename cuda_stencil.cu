@@ -288,4 +288,3 @@ void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec
   gpuErrchk(cudaMemcpy((double*)nabla2vec.data(), nabla2vec_,
                        sizeof(double) * nabla2vec.numElements(), cudaMemcpyDeviceToHost));
 }
-
