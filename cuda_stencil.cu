@@ -191,13 +191,11 @@ LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
                                    const atlasInterface::Field<double>& nabla2vec)
     : mesh_(mesh) {
 
-  printf("called succesfully!\n");
-
   // alloc fields
   gpuErrchk(cudaMalloc((void**)&vec_, sizeof(double) * vec.numElements()));
-  gpuErrchk(cudaMalloc((void**)&rotVec, sizeof(double) * rotVec.numElements()));
+  gpuErrchk(cudaMalloc((void**)&rotVec_, sizeof(double) * rotVec.numElements()));
   gpuErrchk(cudaMalloc((void**)&geofacRot_, sizeof(double) * geofacRot.numElements()));
-  gpuErrchk(cudaMalloc((void**)&divVec, sizeof(double) * divVec.numElements()));
+  gpuErrchk(cudaMalloc((void**)&divVec_, sizeof(double) * divVec.numElements()));
   gpuErrchk(cudaMalloc((void**)&geofacDiv_, sizeof(double) * geofacDiv.numElements()));
   gpuErrchk(
       cudaMalloc((void**)&primal_edge_length_, sizeof(double) * primal_edge_length.numElements()));
