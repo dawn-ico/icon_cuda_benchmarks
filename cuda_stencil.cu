@@ -24,6 +24,17 @@
 #include <cuda_runtime.h>
 
 namespace {
+
+#define gpuErrchk(ans)                                                                             \
+  { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true) {
+  if(code != cudaSuccess) {
+    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+    if(abort)
+      exit(code);
+  }
+}
+
 #define EDGES_PER_NODE 6
 #define EDGES_PER_CELL 3
 #define CELLS_PER_EDGE 2
@@ -124,13 +135,13 @@ void copyNeighborTableIfPresent(const ConnectivityT& conn, int numElements, int 
     }
   }
   assert(hostTable.size() == numElements * numNbhPerElement);
-  cudaMemcpy(target, hostTable.data(), sizeof(int) * numElements * numNbhPerElement,
-             cudaMemcpyHostToDevice);
+  gpuErrchk(cudaMemcpy(target, hostTable.data(), sizeof(int) * numElements * numNbhPerElement,
+                       cudaMemcpyHostToDevice));
 }
 
 GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
   // position vector
-  cudaMalloc((void**)&pos_, sizeof(double2) * mesh.nodes().size());
+  gpuErrchk(cudaMalloc((void**)&pos_, sizeof(double2) * mesh.nodes().size()));
   // neighbor counts
   const int cellsPerNode = 6;
   const int edgesPerNode = 6;
@@ -139,19 +150,20 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
   const int nodesPerCell = 3;
   const int edgesPerCell = 3;
   // nbh list allocation (could maybe be improved using mallocPitch)
-  cudaMalloc((void**)&nodeToCell_, sizeof(int) * mesh.nodes().size() * cellsPerNode);
-  cudaMalloc((void**)&nodeToEdge_, sizeof(int) * mesh.nodes().size() * edgesPerNode);
-  cudaMalloc((void**)&edgeToCell_, sizeof(int) * mesh.edges().size() * cellsPerEdge);
-  cudaMalloc((void**)&edgeToNode_, sizeof(int) * mesh.edges().size() * nodesPerEdge);
-  cudaMalloc((void**)&cellToNode_, sizeof(int) * mesh.cells().size() * nodesPerCell);
-  cudaMalloc((void**)&cellToEdge_, sizeof(int) * mesh.cells().size() * edgesPerCell);
+  gpuErrchk(cudaMalloc((void**)&nodeToCell_, sizeof(int) * mesh.nodes().size() * cellsPerNode));
+  gpuErrchk(cudaMalloc((void**)&nodeToEdge_, sizeof(int) * mesh.nodes().size() * edgesPerNode));
+  gpuErrchk(cudaMalloc((void**)&edgeToCell_, sizeof(int) * mesh.edges().size() * cellsPerEdge));
+  gpuErrchk(cudaMalloc((void**)&edgeToNode_, sizeof(int) * mesh.edges().size() * nodesPerEdge));
+  gpuErrchk(cudaMalloc((void**)&cellToNode_, sizeof(int) * mesh.cells().size() * nodesPerCell));
+  gpuErrchk(cudaMalloc((void**)&cellToEdge_, sizeof(int) * mesh.cells().size() * edgesPerCell));
   // copy position vector
   std::vector<double2> pHost;
   auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
   for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
     pHost.push_back({xy(nodeIdx, atlas::LON), xy(nodeIdx, atlas::LAT)});
   }
-  cudaMemcpy(pos_, pHost.data(), sizeof(double2) * mesh.nodes().size(), cudaMemcpyHostToDevice);
+  gpuErrchk(cudaMemcpy(pos_, pHost.data(), sizeof(double2) * mesh.nodes().size(),
+                       cudaMemcpyHostToDevice));
   // copy neighbor tables
   copyNeighborTableIfPresent(mesh.nodes().cell_connectivity(), mesh.nodes().size(), cellsPerNode,
                              nodeToCell_);
@@ -182,32 +194,38 @@ LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
   printf("called succesfully!\n");
 
   // alloc fields
-  cudaMalloc((void**)&vec_, sizeof(double) * vec.numElements());
-  cudaMalloc((void**)&rotVec, sizeof(double) * rotVec.numElements());
-  cudaMalloc((void**)&geofacRot_, sizeof(double) * geofacRot.numElements());
-  cudaMalloc((void**)&divVec, sizeof(double) * divVec.numElements());
-  cudaMalloc((void**)&geofacDiv_, sizeof(double) * geofacDiv.numElements());
-  cudaMalloc((void**)&primal_edge_length_, sizeof(double) * primal_edge_length.numElements());
-  cudaMalloc((void**)&dual_edge_length_, sizeof(double) * dual_edge_length.numElements());
-  cudaMalloc((void**)&tangent_orientation_, sizeof(double) * tangent_orientation.numElements());
-  cudaMalloc((void**)&nabla2vec_, sizeof(double) * nabla2vec.numElements());
+  gpuErrchk(cudaMalloc((void**)&vec_, sizeof(double) * vec.numElements()));
+  gpuErrchk(cudaMalloc((void**)&rotVec, sizeof(double) * rotVec.numElements()));
+  gpuErrchk(cudaMalloc((void**)&geofacRot_, sizeof(double) * geofacRot.numElements()));
+  gpuErrchk(cudaMalloc((void**)&divVec, sizeof(double) * divVec.numElements()));
+  gpuErrchk(cudaMalloc((void**)&geofacDiv_, sizeof(double) * geofacDiv.numElements()));
+  gpuErrchk(
+      cudaMalloc((void**)&primal_edge_length_, sizeof(double) * primal_edge_length.numElements()));
+  gpuErrchk(
+      cudaMalloc((void**)&dual_edge_length_, sizeof(double) * dual_edge_length.numElements()));
+  gpuErrchk(cudaMalloc((void**)&tangent_orientation_,
+                       sizeof(double) * tangent_orientation.numElements()));
+  gpuErrchk(cudaMalloc((void**)&nabla2vec_, sizeof(double) * nabla2vec.numElements()));
 
   // copy fields from host to device
-  cudaMemcpy(vec_, vec.data(), sizeof(double) * vec.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(rotVec_, rotVec.data(), sizeof(double) * rotVec.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(geofacRot_, geofacRot.data(), sizeof(double) * geofacRot.numElements(),
-             cudaMemcpyHostToDevice);
-  cudaMemcpy(divVec_, divVec.data(), sizeof(double) * divVec.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(geofacDiv_, geofacDiv.data(), sizeof(double) * geofacDiv.numElements(),
-             cudaMemcpyHostToDevice);
-  cudaMemcpy(primal_edge_length_, primal_edge_length.data(),
-             sizeof(double) * primal_edge_length.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(dual_edge_length_, dual_edge_length.data(),
-             sizeof(double) * dual_edge_length.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(tangent_orientation_, tangent_orientation.data(),
-             sizeof(double) * tangent_orientation.numElements(), cudaMemcpyHostToDevice);
-  cudaMemcpy(nabla2vec_, nabla2vec.data(), sizeof(double) * nabla2vec.numElements(),
-             cudaMemcpyHostToDevice);
+  gpuErrchk(
+      cudaMemcpy(vec_, vec.data(), sizeof(double) * vec.numElements(), cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(rotVec_, rotVec.data(), sizeof(double) * rotVec.numElements(),
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(geofacRot_, geofacRot.data(), sizeof(double) * geofacRot.numElements(),
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(divVec_, divVec.data(), sizeof(double) * divVec.numElements(),
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(geofacDiv_, geofacDiv.data(), sizeof(double) * geofacDiv.numElements(),
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(primal_edge_length_, primal_edge_length.data(),
+                       sizeof(double) * primal_edge_length.numElements(), cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(dual_edge_length_, dual_edge_length.data(),
+                       sizeof(double) * dual_edge_length.numElements(), cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(tangent_orientation_, tangent_orientation.data(),
+                       sizeof(double) * tangent_orientation.numElements(), cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(nabla2vec_, nabla2vec.data(), sizeof(double) * nabla2vec.numElements(),
+                       cudaMemcpyHostToDevice));
 }
 
 void LaplacianStencil::run() {
@@ -216,12 +234,16 @@ void LaplacianStencil::run() {
     dim3 dG((mesh_.NumNodes() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
     computeRot<<<dG, dB>>>(mesh_.EdgeToNode(), vec_, geofacRot_, mesh_.NumNodes(), rotVec_);
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
   }
   // stage over cells
   {
     dim3 dG((mesh_.NumCells() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
     computeDiv<<<dG, dB>>>(mesh_.CellToEdge(), vec_, geofacDiv_, mesh_.NumCells(), divVec_);
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
   }
   // stage over edges
   {
@@ -230,6 +252,8 @@ void LaplacianStencil::run() {
     computeLapl<<<dG, dB>>>(mesh_.EdgeToNode(), rotVec_, primal_edge_length_, tangent_orientation_,
                             mesh_.EdgeToCell(), divVec_, dual_edge_length_, mesh_.NumEdges(),
                             nabla2vec_);
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
   }
 }
 
@@ -242,21 +266,22 @@ void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec
                                         atlasInterface::Field<double>& dual_edge_length,
                                         atlasInterface::Field<double>& tangent_orientation,
                                         atlasInterface::Field<double>& nabla2vec) const {
-  cudaMemcpy((double*)vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(),
-             cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)geofacRot.data(), geofacRot_, sizeof(double) * geofacRot.numElements(),
-             cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)divVec.data(), divVec_, sizeof(double) * divVec.numElements(),
-             cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)geofacDiv.data(), geofacDiv_, sizeof(double) * geofacDiv.numElements(),
-             cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)primal_edge_length_, primal_edge_length.data(),
-             sizeof(double) * primal_edge_length.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)dual_edge_length.data(), dual_edge_length_,
-             sizeof(double) * dual_edge_length.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)tangent_orientation.data(), tangent_orientation_,
-             sizeof(double) * tangent_orientation.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy((double*)nabla2vec.data(), nabla2vec_, sizeof(double) * nabla2vec.numElements(),
-             cudaMemcpyDeviceToHost);
+  gpuErrchk(cudaMemcpy((double*)vec.data(), vec_, sizeof(double) * vec.numElements(),
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(),
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)geofacRot.data(), geofacRot_,
+                       sizeof(double) * geofacRot.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)divVec.data(), divVec_, sizeof(double) * divVec.numElements(),
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)geofacDiv.data(), geofacDiv_,
+                       sizeof(double) * geofacDiv.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)primal_edge_length_, primal_edge_length.data(),
+                       sizeof(double) * primal_edge_length.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)dual_edge_length.data(), dual_edge_length_,
+                       sizeof(double) * dual_edge_length.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)tangent_orientation.data(), tangent_orientation_,
+                       sizeof(double) * tangent_orientation.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((double*)nabla2vec.data(), nabla2vec_,
+                       sizeof(double) * nabla2vec.numElements(), cudaMemcpyDeviceToHost));
 }
