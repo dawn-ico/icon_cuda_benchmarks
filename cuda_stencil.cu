@@ -140,6 +140,11 @@ void copyNeighborTableIfPresent(const ConnectivityT& conn, int numElements, int 
 }
 
 GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
+
+  numNodes_ = mesh.nodes().size();
+  numEdges_ = mesh.edges().size();
+  numCells_ = mesh.cells().size();
+
   // position vector
   gpuErrchk(cudaMalloc((void**)&pos_, sizeof(double2) * mesh.nodes().size()));
   // neighbor counts
@@ -274,7 +279,7 @@ void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec
                        cudaMemcpyDeviceToHost));
   gpuErrchk(cudaMemcpy((double*)geofacDiv.data(), geofacDiv_,
                        sizeof(double) * geofacDiv.numElements(), cudaMemcpyDeviceToHost));
-  gpuErrchk(cudaMemcpy((double*)primal_edge_length_, primal_edge_length.data(),
+  gpuErrchk(cudaMemcpy((double*)primal_edge_length.data(), primal_edge_length_,
                        sizeof(double) * primal_edge_length.numElements(), cudaMemcpyDeviceToHost));
   gpuErrchk(cudaMemcpy((double*)dual_edge_length.data(), dual_edge_length_,
                        sizeof(double) * dual_edge_length.numElements(), cudaMemcpyDeviceToHost));

@@ -472,7 +472,6 @@ int main() {
 
   LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
                         dual_edge_length, tangent_orientation, nabla2_vec);
-  return 0;
   lapl.run();
   lapl.CopyResultToHost(vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
                         dual_edge_length, tangent_orientation, nabla2_vec);
