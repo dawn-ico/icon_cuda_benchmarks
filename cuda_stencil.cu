@@ -236,7 +236,7 @@ void LaplacianStencil::run() {
   {
     dim3 dG((mesh_.NumNodes() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
-    //computeRot<<<dG, dB>>>(mesh_.EdgeToNode(), vec_, geofacRot_, mesh_.NumNodes(), rotVec_);
+    computeRot<<<dG, dB>>>(mesh_.NodeToEdge(), vec_, geofacRot_, mesh_.NumNodes(), rotVec_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
@@ -252,9 +252,9 @@ void LaplacianStencil::run() {
   {
     dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
-    //computeLapl<<<dG, dB>>>(mesh_.EdgeToNode(), rotVec_, primal_edge_length_, tangent_orientation_,
-    //                        mesh_.EdgeToCell(), divVec_, dual_edge_length_, mesh_.NumEdges(),
-    //                        nabla2vec_);
+    computeLapl<<<dG, dB>>>(mesh_.EdgeToNode(), rotVec_, primal_edge_length_, tangent_orientation_,
+                            mesh_.EdgeToCell(), divVec_, dual_edge_length_, mesh_.NumEdges(),
+                            nabla2vec_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
