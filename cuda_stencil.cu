@@ -1,4 +1,5 @@
-//===--------------------------------------------------------------------------------*- C++ -*-===//
+//===--------------------------------------------------------------------------------*-
+// C++ -*-===//
 //                          _
 //                         | |
 //                       __| | __ ___      ___ ___
@@ -28,6 +29,7 @@ namespace {
 #define CELLS_PER_EDGE 2
 #define NODES_PER_EDGE 2
 #define BLOCK_SIZE 128
+#define DEVICE_MISSING_VALUE -1
 __global__ void computeRot(const int* __restrict__ nodeToEdge, const double* __restrict__ vecE,
                            const double* __restrict__ geofacRot, int numNodes, double* rotVec) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -38,6 +40,9 @@ __global__ void computeRot(const int* __restrict__ nodeToEdge, const double* __r
     double lhs = 0.;                                            // init
     for(int nbhIter = 0; nbhIter < EDGES_PER_NODE; nbhIter++) { // reduceEdgeToVertex
       int nbhIdx = __ldg(&nodeToEdge[pidx * EDGES_PER_NODE + nbhIter]);
+      if(nbhIdx == DEVICE_MISSING_VALUE) {
+        continue;
+      }
       lhs += __ldg(&vecE[nbhIdx]) * __ldg(&geofacRot[pidx * EDGES_PER_NODE + nbhIter]);
     }
     rotVec[pidx] += lhs;
@@ -53,6 +58,9 @@ __global__ void computeDiv(const int* __restrict__ cellToEdge, const double* __r
     double lhs = 0.;                                            // init
     for(int nbhIter = 0; nbhIter < EDGES_PER_CELL; nbhIter++) { // reduceEdgeToCell
       int nbhIdx = __ldg(&cellToEdge[pidx * EDGES_PER_CELL + nbhIter]);
+      if(nbhIdx == DEVICE_MISSING_VALUE) {
+        continue;
+      }
       lhs += __ldg(&vecE[nbhIdx]) * __ldg(&geofacDiv[pidx * EDGES_PER_CELL + nbhIter]);
     }
     divVec[pidx] += lhs;
@@ -73,6 +81,9 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     double weights[2] = {1, -1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < NODES_PER_EDGE; nbhIter++) { // reduceNodeToEdge
       int nbhIdx = __ldg(&edgeToNode[pidx * NODES_PER_EDGE + nbhIter]);
+      if(nbhIdx == DEVICE_MISSING_VALUE) {
+        continue;
+      }
       lhs += __ldg(&rotVec[nbhIdx]) * weights[nbhIter];
     }
     nabla2vec[pidx] += lhs;
@@ -84,6 +95,9 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     double weights[2] = {1, -1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < CELLS_PER_EDGE; nbhIter++) { // reduceCellToEdge
       int nbhIdx = __ldg(&edgeToCell[pidx * CELLS_PER_EDGE + nbhIter]);
+      if(nbhIdx == DEVICE_MISSING_VALUE) {
+        continue;
+      }
       lhs += __ldg(&divVec[nbhIdx]) * weights[nbhIter];
     }
     nabla2vec[pidx] += lhs;
@@ -93,19 +107,25 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
 } // namespace
 
 template <typename ConnectivityT>
-void copyNeighborTable(const ConnectivityT& conn, int numElements, int numNbhPerElement,
-                       int* target) {
-  {
-    std::vector<int> nodeToCellHost;
-    for(int nodeIdx = 0; nodeIdx < numElements; nodeIdx++) {
-      for(int nbhIdx = 0; nbhIdx < conn.cols(nodeIdx); nbhIdx++) {
-        nodeToCellHost.push_back(conn(nodeIdx, nbhIdx));
+void copyNeighborTableIfPresent(const ConnectivityT& conn, int numElements, int numNbhPerElement,
+                                int* target) {
+  if(conn.rows() == 0) {
+    return;
+  }
+
+  std::vector<int> hostTable;
+  for(int elemIdx = 0; elemIdx < numElements; elemIdx++) {
+    for(int nbhIdx = 0; nbhIdx < numNbhPerElement; nbhIdx++) {
+      if(nbhIdx < conn.cols(elemIdx)) {
+        hostTable.push_back(conn(elemIdx, nbhIdx));
+      } else {
+        hostTable.push_back(DEVICE_MISSING_VALUE);
       }
     }
-    assert(nodeToCellHost.size() == numElements * numNbhPerElement);
-    cudaMemcpy(target, nodeToCellHost.data(), sizeof(int) * numElements * numNbhPerElement,
-               cudaMemcpyHostToDevice);
   }
+  assert(hostTable.size() == numElements * numNbhPerElement);
+  cudaMemcpy(target, hostTable.data(), sizeof(int) * numElements * numNbhPerElement,
+             cudaMemcpyHostToDevice);
 }
 
 GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
@@ -133,18 +153,18 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
   }
   cudaMemcpy(pos_, pHost.data(), sizeof(double2) * mesh.nodes().size(), cudaMemcpyHostToDevice);
   // copy neighbor tables
-  copyNeighborTable(mesh.nodes().cell_connectivity(), mesh.nodes().size(), cellsPerNode,
-                    nodeToCell_);
-  copyNeighborTable(mesh.nodes().edge_connectivity(), mesh.nodes().size(), edgesPerNode,
-                    nodeToEdge_);
-  copyNeighborTable(mesh.edges().cell_connectivity(), mesh.edges().size(), cellsPerEdge,
-                    edgeToCell_);
-  copyNeighborTable(mesh.edges().node_connectivity(), mesh.edges().size(), nodesPerEdge,
-                    edgeToNode_);
-  copyNeighborTable(mesh.cells().node_connectivity(), mesh.cells().size(), nodesPerCell,
-                    cellToNode_);
-  copyNeighborTable(mesh.cells().node_connectivity(), mesh.cells().size(), edgesPerCell,
-                    cellToEdge_);
+  copyNeighborTableIfPresent(mesh.nodes().cell_connectivity(), mesh.nodes().size(), cellsPerNode,
+                             nodeToCell_);
+  copyNeighborTableIfPresent(mesh.nodes().edge_connectivity(), mesh.nodes().size(), edgesPerNode,
+                             nodeToEdge_);
+  copyNeighborTableIfPresent(mesh.edges().cell_connectivity(), mesh.edges().size(), cellsPerEdge,
+                             edgeToCell_);
+  copyNeighborTableIfPresent(mesh.edges().node_connectivity(), mesh.edges().size(), nodesPerEdge,
+                             edgeToNode_);
+  copyNeighborTableIfPresent(mesh.cells().node_connectivity(), mesh.cells().size(), nodesPerCell,
+                             cellToNode_);
+  copyNeighborTableIfPresent(mesh.cells().node_connectivity(), mesh.cells().size(), edgesPerCell,
+                             cellToEdge_);
 }
 
 LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
@@ -222,19 +242,21 @@ void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec
                                         atlasInterface::Field<double>& dual_edge_length,
                                         atlasInterface::Field<double>& tangent_orientation,
                                         atlasInterface::Field<double>& nabla2vec) const {
-  cudaMemcpy(vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(geofacRot.data(), geofacRot_, sizeof(double) * geofacRot.numElements(),
+  cudaMemcpy((double*)vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy((double*)rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(),
              cudaMemcpyDeviceToHost);
-  cudaMemcpy(divVec.data(), divVec_, sizeof(double) * divVec.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(geofacDiv.data(), geofacDiv_, sizeof(double) * geofacDiv.numElements(),
+  cudaMemcpy((double*)geofacRot.data(), geofacRot_, sizeof(double) * geofacRot.numElements(),
              cudaMemcpyDeviceToHost);
-  cudaMemcpy(primal_edge_length_, primal_edge_length.data(),
+  cudaMemcpy((double*)divVec.data(), divVec_, sizeof(double) * divVec.numElements(),
+             cudaMemcpyDeviceToHost);
+  cudaMemcpy((double*)geofacDiv.data(), geofacDiv_, sizeof(double) * geofacDiv.numElements(),
+             cudaMemcpyDeviceToHost);
+  cudaMemcpy((double*)primal_edge_length_, primal_edge_length.data(),
              sizeof(double) * primal_edge_length.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(dual_edge_length.data(), dual_edge_length_,
+  cudaMemcpy((double*)dual_edge_length.data(), dual_edge_length_,
              sizeof(double) * dual_edge_length.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(tangent_orientation.data(), tangent_orientation_,
+  cudaMemcpy((double*)tangent_orientation.data(), tangent_orientation_,
              sizeof(double) * tangent_orientation.numElements(), cudaMemcpyDeviceToHost);
-  cudaMemcpy(nabla2vec.data(), nabla2vec_, sizeof(double) * nabla2vec.numElements(),
+  cudaMemcpy((double*)nabla2vec.data(), nabla2vec_, sizeof(double) * nabla2vec.numElements(),
              cudaMemcpyDeviceToHost);
 }
