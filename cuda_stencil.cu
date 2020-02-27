@@ -222,7 +222,7 @@ void LaplacianStencil::CopyResultToHost(const atlasInterface::Field<double>& vec
                                         atlasInterface::Field<double>& dual_edge_length,
                                         atlasInterface::Field<double>& tangent_orientation,
                                         atlasInterface::Field<double>& nabla2vec) const {
-  cudaMemcpy(vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
+  cudaMemcpy((void*)vec.data(), vec_, sizeof(double) * vec.numElements(), cudaMemcpyDeviceToHost);
   cudaMemcpy(rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(), cudaMemcpyDeviceToHost);
   cudaMemcpy(geofacRot.data(), geofacRot_, sizeof(double) * geofacRot.numElements(),
              cudaMemcpyDeviceToHost);
