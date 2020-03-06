@@ -241,7 +241,7 @@ int main(int argc, char const* argv[]) {
   //   ! coefficient (equal to +-1) is necessary, given by
   //   ! ptr_patch%grid%cells%edge_orientation)
   auto [geofac_div_F, geofac_div] =
-      MakeAtlasSparseField("geofac_div", mesh.cells().size(), edgesPerVertex);
+      MakeAtlasSparseField("geofac_div", mesh.cells().size(), edgesPerCell);
 
   auto [edge_orientation_cell_F, edge_orientation_cell] =
       MakeAtlasSparseField("edge_orientation_cell", mesh.cells().size(), edgesPerCell);

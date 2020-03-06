@@ -56,7 +56,7 @@ __global__ void computeRot(const int* __restrict__ nodeToEdge, const double* __r
       }
       lhs += __ldg(&vecE[nbhIdx]) * __ldg(&geofacRot[pidx * EDGES_PER_NODE + nbhIter]);
     }
-    rotVec[pidx] += lhs;
+    rotVec[pidx] = lhs;
   }
 }
 __global__ void computeDiv(const int* __restrict__ cellToEdge, const double* __restrict__ vecE,
@@ -74,7 +74,7 @@ __global__ void computeDiv(const int* __restrict__ cellToEdge, const double* __r
       }
       lhs += __ldg(&vecE[nbhIdx]) * __ldg(&geofacDiv[pidx * EDGES_PER_CELL + nbhIter]);
     }
-    divVec[pidx] += lhs;
+    divVec[pidx] = lhs;
   }
 }
 __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __restrict__ rotVec,
@@ -88,6 +88,7 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     return;
   }
   {
+	//TODO FIX THIS
     double lhs = 0.;
     double weights[2] = {1, -1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < NODES_PER_EDGE; nbhIter++) { // reduceNodeToEdge
@@ -100,7 +101,7 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     nabla2vec[pidx] += lhs;
   }
   nabla2vec[pidx] =
-      nabla2vec[pidx] / __ldg(&primal_edge_length[pidx]) * __ldg(&tangent_orientation[pidx]);
+      lhs / __ldg(&primal_edge_length[pidx]) * __ldg(&tangent_orientation[pidx]);
   {
     double lhs = 0.;
     double weights[2] = {1, -1}; // compile time literals, can be generated that way
@@ -113,7 +114,7 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     }
     nabla2vec[pidx] += lhs;
   }
-  nabla2vec[pidx] = nabla2vec[pidx] / __ldg(&dual_edge_length[pidx]);
+  nabla2vec[pidx] = nabla2vec[pidx] +lhs / __ldg(&dual_edge_length[pidx]);
 }
 } // namespace
 
