@@ -12,52 +12,58 @@
 //
 //===------------------------------------------------------------------------------------------===//
 
-//===------------------------------------------------------------------------------------------===//
+// This file implements the nabla2vec function from mo_math_laplace.f90 (see also
+// mo_math_divrot.f90) in ICON, using the Atlas, dawn, and the atlas interface therein. Some notes:
 //
+//  - names have been kept close to the FORTRAN code, but the "_Location" suffixes have been removed
+//    because of the strong typing in C++ and inconsistent application in the FORTRAN source
 //
-//    WARNING! THIS IS A PROTOTYPE! DOES NOT YET PRODUCE CORRECT RESULTS! WARNING!
+//  - the main function in this file either accepts a vertical resolution nx, or reads a netcdf mesh
+//    from disk. in the latter case, the netcdf file needs to contain a structures equilateral
+//    triangle mesh
 //
-//
-//===------------------------------------------------------------------------------------------===//
+//  - this version makes no attempt to compute anything meaningful at the boundaries. values at the
+//    boundaries are skipped in outputs, meaningless default values are assigned to various
+//    geometrical factors etc.
 
 #include <cmath>
+#include <cstdio>
+#include <fenv.h>
+#include <optional>
 #include <vector>
 
+// atlas functions
+#include <atlas/array.h>
+#include <atlas/grid.h>
+#include <atlas/mesh.h>
+#include <atlas/mesh/actions/BuildEdges.h>
+// #include <atlas/mesh/actions/BuildEdges.h>
+#include <atlas/util/CoordinateEnums.h>
+
+// atlas interface for dawn generated code
+#include "interfaces/atlas_interface.hpp"
+
+// icon stencil
+#include "generated_iconLaplace.hpp"
+
+// atlas utilities
 #include "AtlasCartesianWrapper.h"
-#include "atlas/grid/Grid.h"
-#include "atlas/grid/Iterator.h"
-#include "atlas/grid/StructuredGrid.h"
-#include "atlas/grid/detail/grid/Structured.h"
-#include "atlas/library/Library.h"
-#include "atlas/library/config.h"
-#include "atlas/mesh/Mesh.h"
-#include "atlas/mesh/actions/BuildEdges.h"
-#include "atlas/meshgenerator.h"
-
-#include "atlas/functionspace/CellColumns.h"
-#include "atlas/functionspace/EdgeColumns.h"
-#include "atlas/functionspace/NodeColumns.h"
-
-#include "atlas_interface.hpp"
-
-#include "vector_types.h"
-
-#include "cuda_stencil.h"
-
 #include "AtlasFromNetcdf.h"
 #include "GenerateRectAtlasMesh.h"
 
+namespace {
+//===------------------------------------------------------------------------------------------===//
+// output (debugging)
+//===------------------------------------------------------------------------------------------===//
 template <typename T>
 static int sgn(T val) {
   return (T(0) < val) - (val < T(0));
 }
 
-//===------------------------------------------------------------------------------------------===//
-// output (debugging)
-//===------------------------------------------------------------------------------------------===//
 void dumpMesh(const atlas::Mesh& m, AtlasToCartesian& wrapper, const std::string& fname);
 void dumpDualMesh(const atlas::Mesh& m, AtlasToCartesian& wrapper, const std::string& fname);
-
+void dumpMesh4Triplot(const atlas::Mesh& mesh, const std::string prefix,
+                      std::optional<AtlasToCartesian> wrapper = std::nullopt);
 void dumpNodeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
                    atlasInterface::Field<double>& field, int level);
 void dumpCellField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
@@ -66,10 +72,464 @@ void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCar
                    atlasInterface::Field<double>& field, int level,
                    std::optional<Orientation> color = std::nullopt);
 void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
+                   atlasInterface::Field<double>& field, int level, std::vector<int> edgeList,
+                   std::optional<Orientation> color = std::nullopt);
+void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
                    atlasInterface::Field<double>& field_x, atlasInterface::Field<double>& field_y,
                    int level, std::optional<Orientation> color = std::nullopt);
+//===------------------------------------------------------------------------------------------===//
+// error reporting
+//===------------------------------------------------------------------------------------------===//
+std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
+                                                 const atlasInterface::Field<double>& ref,
+                                                 const atlasInterface::Field<double>& sol,
+                                                 int level) {
+  double Linf = 0.;
+  double L1 = 0.;
+  double L2 = 0.;
+  for(int idx : indices) {
+    double dif = ref(idx, level) - sol(idx, level);
+    Linf = fmax(fabs(dif), Linf);
+    L1 += fabs(dif);
+    L2 += dif * dif;
+  }
+  L1 /= indices.size();
+  L2 = sqrt(L2) / sqrt(indices.size());
+  return {Linf, L1, L2};
+}
 
-void debugDump(const atlas::Mesh& mesh, const std::string prefix) {
+} // namespace
+
+int main(int argc, char const* argv[]) {
+  // enable floating point exception
+  feenableexcept(FE_INVALID | FE_OVERFLOW);
+
+  if(argc != 2) {
+    std::cout << "intended use is\n" << argv[0] << " ny" << std::endl;
+    return -1;
+  }
+  int w = atoi(argv[1]);
+  int k_size = 1;
+  const int level = 0;
+  double lDomain = M_PI;
+
+  // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
+  // like will certainly work too)
+  const bool dbg_out = false;
+  const bool readMeshFromDisk = false;
+
+  atlas::Mesh mesh;
+  if(!readMeshFromDisk) {
+    mesh = AtlasMeshRect(w);
+    atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
+    atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
+    atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
+  } else {
+    mesh = AtlasMeshFromNetCDFComplete("testCaseMesh.nc").value();
+    {
+      auto lonlat = atlas::array::make_view<double, 2>(mesh.nodes().lonlat());
+      auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
+      for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+        xy(nodeIdx, atlas::LON) = lonlat(nodeIdx, atlas::LON);
+        xy(nodeIdx, atlas::LAT) = lonlat(nodeIdx, atlas::LAT);
+      }
+    }
+  }
+
+  // wrapper with various atlas helper functions
+  AtlasToCartesian wrapper(mesh);
+
+  if(dbg_out) {
+    dumpMesh4Triplot(mesh, "laplICONatlas_Mesh", wrapper);
+  }
+
+  const int edgesPerVertex = 6;
+  const int edgesPerCell = 3;
+
+  // current atlas mesh is not compatible with parallel computing
+  // atlas::functionspace::CellColumns fs_cells(mesh, atlas::option::levels(k_size));
+  // atlas::functionspace::NodeColumns fs_nodes(mesh, atlas::option::levels(k_size));
+  // atlas::functionspace::EdgeColumns fs_edges(mesh, atlas::option::levels(k_size));
+
+  //===------------------------------------------------------------------------------------------===//
+  // helper lambdas to readily construct atlas fields and views on one line
+  //===------------------------------------------------------------------------------------------===//
+  auto MakeAtlasField = [&](const std::string& name,
+                            int size) -> std::tuple<atlas::Field, atlasInterface::Field<double>> {
+    atlas::Field field_F{name, atlas::array::DataType::real64(),
+                         atlas::array::make_shape(mesh.edges().size(), k_size)};
+    return {field_F, atlas::array::make_view<double, 2>(field_F)};
+  };
+
+  auto MakeAtlasSparseField =
+      [&](const std::string& name, int size,
+          int sparseSize) -> std::tuple<atlas::Field, atlasInterface::SparseDimension<double>> {
+    atlas::Field field_F{name, atlas::array::DataType::real64(),
+                         atlas::array::make_shape(mesh.edges().size(), k_size, sparseSize)};
+    return {field_F, atlas::array::make_view<double, 3>(field_F)};
+  };
+
+  //===------------------------------------------------------------------------------------------===//
+  // input field (field we want to take the laplacian of)
+  //===------------------------------------------------------------------------------------------===//
+  auto [vec_F, vec] = MakeAtlasField("vec", mesh.edges().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // control field holding the analytical solution for the divergence
+  //===------------------------------------------------------------------------------------------===//
+  auto [divVecSol_F, divVecSol] = MakeAtlasField("divVecSol", mesh.cells().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // control field holding the analytical solution for the curl
+  //===------------------------------------------------------------------------------------------===//
+  auto [rotVecSol_F, rotVecSol] = MakeAtlasField("rotVecSol", mesh.nodes().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // control field holding the analytical solution for Laplacian
+  //===------------------------------------------------------------------------------------------===//
+  auto [lapVecSol_F, lapVecSol] = MakeAtlasField("lapVecSol", mesh.edges().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // output field (field containing the computed laplacian)
+  //===------------------------------------------------------------------------------------------===//
+  auto [nabla2_vec_F, nabla2_vec] = MakeAtlasField("nabla2_vec", mesh.edges().size());
+  // term 1 and term 2 of nabla for debugging
+  auto [nabla2t1_vec_F, nabla2t1_vec] = MakeAtlasField("nabla2t1_vec", mesh.edges().size());
+  auto [nabla2t2_vec_F, nabla2t2_vec] = MakeAtlasField("nabla2t2_vec", mesh.edges().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // intermediary fields (curl/rot and div of vec_e)
+  //===------------------------------------------------------------------------------------------===//
+
+  // rotation (more commonly curl) of vec_e on vertices
+  auto [rot_vec_F, rot_vec] = MakeAtlasField("nabla2t2_vec", mesh.nodes().size());
+
+  // divergence of vec_e on cells
+  auto [div_vec_F, div_vec] = MakeAtlasField("nabla2t2_vec", mesh.cells().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // sparse dimensions for computing intermediary fields
+  //===------------------------------------------------------------------------------------------===//
+
+  // needed for the computation of the curl/rotation. according to documentation this needs to be:
+  //
+  // ! the appropriate dual cell based verts%edge_orientation
+  // ! is required to obtain the correct value for the
+  // ! application of Stokes theorem (which requires the scalar
+  // ! product of the vector field with the tangent unit vectors
+  // ! going around dual cell jv COUNTERCLOKWISE;
+  // ! since the positive direction for the vec_e components is
+  // ! not necessarily the one yelding counterclockwise rotation
+  // ! around dual cell jv, a correction coefficient (equal to +-1)
+  // ! is necessary, given by g%verts%edge_orientation
+  auto [geofac_rot_F, geofac_rot] =
+      MakeAtlasSparseField("geofac_rot", mesh.nodes().size(), edgesPerVertex);
+
+  auto [edge_orientation_vertex_F, edge_orientation_vertex] =
+      MakeAtlasSparseField("edge_orientation_vertex", mesh.nodes().size(), edgesPerVertex);
+
+  // needed for the computation of the curl/rotation. according to documentation this needs to be:
+  //
+  //   ! ...the appropriate cell based edge_orientation is required to
+  //   ! obtain the correct value for the application of Gauss theorem
+  //   ! (which requires the scalar product of the vector field with the
+  //   ! OUTWARD pointing unit vector with respect to cell jc; since the
+  //   ! positive direction for the vector components is not necessarily
+  //   ! the outward pointing one with respect to cell jc, a correction
+  //   ! coefficient (equal to +-1) is necessary, given by
+  //   ! ptr_patch%grid%cells%edge_orientation)
+  auto [geofac_div_F, geofac_div] =
+      MakeAtlasSparseField("geofac_div", mesh.cells().size(), edgesPerVertex);
+
+  auto [edge_orientation_cell_F, edge_orientation_cell] =
+      MakeAtlasSparseField("edge_orientation_cell", mesh.cells().size(), edgesPerCell);
+
+  //===------------------------------------------------------------------------------------------===//
+  // fields containing geometric information
+  //===------------------------------------------------------------------------------------------===//
+  auto [tangent_orientation_F, tangent_orientation] =
+      MakeAtlasField("tangent_orientation", mesh.edges().size());
+  auto [primal_edge_length_F, primal_edge_length] =
+      MakeAtlasField("primal_edge_length", mesh.edges().size());
+  auto [dual_edge_length_F, dual_edge_length] =
+      MakeAtlasField("dual_edge_length", mesh.edges().size());
+  auto [primal_normal_x_F, primal_normal_x] =
+      MakeAtlasField("primal_normal_x", mesh.edges().size());
+  auto [primal_normal_y_F, primal_normal_y] =
+      MakeAtlasField("primal_normal_y", mesh.edges().size());
+  auto [dual_normal_x_F, dual_normal_x] = MakeAtlasField("dual_normal_x", mesh.edges().size());
+  auto [dual_normal_y_F, dual_normal_y] = MakeAtlasField("dual_normal_y", mesh.edges().size());
+  auto [cell_area_F, cell_area] = MakeAtlasField("cell_area", mesh.cells().size());
+  auto [dual_cell_area_F, dual_cell_area] = MakeAtlasField("dual_cell_area", mesh.nodes().size());
+
+  //===------------------------------------------------------------------------------------------===//
+  // initialize geometrical info on edges
+  //===------------------------------------------------------------------------------------------===//
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    primal_edge_length(edgeIdx, level) = wrapper.edgeLength(mesh, edgeIdx);
+    dual_edge_length(edgeIdx, level) = wrapper.dualEdgeLength(mesh, edgeIdx);
+    tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
+    auto [nx, ny] = wrapper.primalNormal(mesh, edgeIdx);
+    primal_normal_x(edgeIdx, level) = nx;
+    primal_normal_y(edgeIdx, level) = ny;
+    // The primal normal, dual normal
+    // forms a left-handed coordinate system
+    dual_normal_x(edgeIdx, level) = ny;
+    dual_normal_y(edgeIdx, level) = -nx;
+  }
+
+  if(dbg_out) {
+    dumpEdgeField("laplICONatlas_tangentOrientation.txt", mesh, wrapper, tangent_orientation,
+                  level);
+    dumpEdgeField("laplICONatlas_EdgeLength.txt", mesh, wrapper, primal_edge_length, level);
+    dumpEdgeField("laplICONatlas_dualEdgeLength.txt", mesh, wrapper, dual_edge_length, level);
+    dumpEdgeField("laplICONatlas_nrm.txt", mesh, wrapper, primal_normal_x, primal_normal_y, level);
+    dumpEdgeField("laplICONatlas_dnrm.txt", mesh, wrapper, dual_normal_x, dual_normal_y, level);
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // initialize geometrical info on cells
+  //===------------------------------------------------------------------------------------------===//
+  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
+    cell_area(cellIdx, level) = wrapper.cellArea(mesh, cellIdx);
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // initialize geometrical info on vertices
+  //===------------------------------------------------------------------------------------------===//
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    dual_cell_area(nodeIdx, level) = wrapper.dualCellArea(mesh, nodeIdx);
+  }
+
+  if(dbg_out) {
+    dumpCellField("laplICONatlas_areaCell.txt", mesh, wrapper, cell_area, level);
+    dumpNodeField("laplICONatlas_areaCellDual.txt", mesh, wrapper, dual_cell_area, level);
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // input (spherical harmonics) and analytical solutions for div, curl and Laplacian
+  //===------------------------------------------------------------------------------------------===//
+
+  auto sphericalHarmonic = [](double x, double y) -> std::tuple<double, double> {
+    return {0.25 * sqrt(105. / (2 * M_PI)) * cos(2 * x) * cos(y) * cos(y) * sin(y),
+            0.5 * sqrt(15. / (2 * M_PI)) * cos(x) * cos(y) * sin(y)};
+  };
+  auto analyticalDivergence = [](double x, double y) {
+    return -0.5 * (sqrt(105. / (2 * M_PI))) * sin(2 * x) * cos(y) * cos(y) * sin(y) +
+           0.5 * sqrt(15. / (2 * M_PI)) * cos(x) * (cos(y) * cos(y) - sin(y) * sin(y));
+  };
+  auto analyticalCurl = [](double x, double y) {
+    double c1 = 0.25 * sqrt(105. / (2 * M_PI));
+    double c2 = 0.5 * sqrt(15. / (2 * M_PI));
+    double dudy = c1 * cos(2 * x) * cos(y) * (cos(y) * cos(y) - 2 * sin(y) * sin(y));
+    double dvdx = -c2 * cos(y) * sin(x) * sin(y);
+    return dvdx - dudy;
+  };
+  auto analyticalLaplacian = [](double x, double y) -> std::tuple<double, double> {
+    double c1 = 0.25 * sqrt(105. / (2 * M_PI));
+    double c2 = 0.5 * sqrt(15. / (2 * M_PI));
+    return {-4 * c1 * cos(2 * x) * cos(y) * cos(y) * sin(y), -4 * c2 * cos(x) * sin(y) * cos(y)};
+  };
+
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    auto [xm, ym] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto [u, v] = sphericalHarmonic(xm, ym);
+    auto [lu, lv] = analyticalLaplacian(xm, ym);
+    vec(edgeIdx, level) = primal_normal_x(edgeIdx, level) * u + primal_normal_y(edgeIdx, level) * v;
+    lapVecSol(edgeIdx, level) =
+        primal_normal_x(edgeIdx, level) * lu + primal_normal_y(edgeIdx, level) * lv;
+  }
+  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
+    auto [xm, ym] = wrapper.cellMidpoint(mesh, cellIdx);
+    divVecSol(cellIdx, level) = analyticalDivergence(xm, ym);
+  }
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    auto [xm, ym] = wrapper.nodeLocation(nodeIdx);
+    rotVecSol(nodeIdx, level) = analyticalCurl(xm, ym);
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // Init geometrical factors (sparse fields)
+  //===------------------------------------------------------------------------------------------===//
+
+  // init edge orientations for vertices and cells
+  auto dot = [](const Vector& v1, const Vector& v2) {
+    return std::get<0>(v1) * std::get<0>(v2) + std::get<1>(v1) * std::get<1>(v2);
+  };
+
+  // Here, the ICON documentation states confusingly enough:
+  //
+  // +1 when the vector from this to the neigh-
+  // bor vertex has the same orientation as the
+  // tangent unit vector of the connecting edge.
+  // -1 otherwise
+  //
+  // what this is really supposed to achieve is to compute a sparse dimension which ensures
+  // that the normal and the orientation of the edge form a left handed coordinate system
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    const auto& nodeEdgeConnectivity = mesh.nodes().edge_connectivity();
+    const auto& edgeNodeConnectivity = mesh.edges().node_connectivity();
+
+    const int missingVal = nodeEdgeConnectivity.missing_value();
+    int numNbh = nodeEdgeConnectivity.cols(nodeIdx);
+
+    // arbitrary val at boundary
+    bool anyMissing = false;
+    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+      anyMissing |= nodeEdgeConnectivity(nodeIdx, nbhIdx) == missingVal;
+    }
+    if(numNbh != 6 || anyMissing) {
+      for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+        edge_orientation_vertex(nodeIdx, nbhIdx, level) = -1;
+      }
+      continue;
+    }
+
+    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+      int edgeIdx = nodeEdgeConnectivity(nodeIdx, nbhIdx);
+
+      int n0 = edgeNodeConnectivity(edgeIdx, 0);
+      int n1 = edgeNodeConnectivity(edgeIdx, 1);
+
+      int centerIdx = (n0 == nodeIdx) ? n0 : n1;
+      int farIdx = (n0 == nodeIdx) ? n1 : n0;
+
+      auto [xLo, yLo] = wrapper.nodeLocation(centerIdx);
+      auto [xHi, yHi] = wrapper.nodeLocation(farIdx);
+
+      Vector edge = {xHi - xLo, yHi - yLo};
+      Vector dualNormal = {dual_normal_x(edgeIdx, level), dual_normal_y(edgeIdx, level)};
+
+      double dbg = dot(edge, dualNormal);
+      int systemSign = sgn(dot(edge, dualNormal)); // geometrical factor "corrects" normal such that
+                                                   // the resulting system is left handed
+      edge_orientation_vertex(nodeIdx, nbhIdx, level) = systemSign;
+    }
+  }
+
+  // ICON documentation states
+  //
+  // The orientation of the edge normal vector
+  // (the variable primal normal in the edges ta-
+  // ble) for the cell according to Gauss formula.
+  // It is equal to +1 if the normal to the edge
+  // is outwards from the cell, otherwise is -1.
+  //
+  // which is quite clear, here goes:
+  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
+    const atlas::mesh::HybridElements::Connectivity& cellEdgeConnectivity =
+        mesh.cells().edge_connectivity();
+    auto [xm, ym] = wrapper.cellCircumcenter(mesh, cellIdx);
+
+    const int missingVal = cellEdgeConnectivity.missing_value();
+    int numNbh = cellEdgeConnectivity.cols(cellIdx);
+    assert(numNbh == edgesPerCell);
+
+    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+      int edgeIdx = cellEdgeConnectivity(cellIdx, nbhIdx);
+      auto [emX, emY] = wrapper.edgeMidpoint(mesh, edgeIdx);
+      Vector toOutsdie{emX - xm, emY - ym};
+      Vector primal = {primal_normal_x(edgeIdx, level), primal_normal_y(edgeIdx, level)};
+      edge_orientation_cell(cellIdx, nbhIdx, level) = sgn(dot(toOutsdie, primal));
+    }
+    // explanation: the vector cellMidpoint -> edgeMidpoint is guaranteed to point outside. The
+    // dot product checks if the edge normal has the same orientation. edgeMidpoint is arbitrary,
+    // any point on e would work just as well
+  }
+
+  // now, consume these two "orientation" fields to form the actual geometrical factors (which
+  // include information about the meshes edge lengths and cell areas)
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    const atlas::mesh::Nodes::Connectivity& nodeEdgeConnectivity = mesh.nodes().edge_connectivity();
+
+    int numNbh = nodeEdgeConnectivity.cols(nodeIdx);
+
+    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+      int edgeIdx = nodeEdgeConnectivity(nodeIdx, nbhIdx);
+      geofac_rot(nodeIdx, nbhIdx, level) =
+          (dual_cell_area(nodeIdx, level) == 0.)
+              ? 0
+              : dual_edge_length(edgeIdx, level) * edge_orientation_vertex(nodeIdx, nbhIdx, level) /
+                    dual_cell_area(nodeIdx, level);
+    }
+    // Original ICON code
+    //
+    // ptr_int%geofac_rot(jv,je,jb) =                &
+    //    & ptr_patch%edges%dual_edge_length(ile,ibe) * &
+    //    & ptr_patch%verts%edge_orientation(jv,jb,je)/ &
+    //    & ptr_patch%verts%dual_area(jv,jb) * REAL(ifac,wp)
+  }
+
+  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
+    const atlas::mesh::HybridElements::Connectivity& cellEdgeConnectivity =
+        mesh.cells().edge_connectivity();
+
+    int numNbh = cellEdgeConnectivity.cols(cellIdx);
+    assert(numNbh == edgesPerCell);
+
+    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
+      int edgeIdx = cellEdgeConnectivity(cellIdx, nbhIdx);
+      geofac_div(cellIdx, nbhIdx, level) = primal_edge_length(edgeIdx, level) *
+                                           edge_orientation_cell(cellIdx, nbhIdx, level) /
+                                           cell_area(cellIdx, level);
+    }
+    // Original ICON code
+    //
+    //  ptr_int%geofac_div(jc,je,jb) = &
+    //    & ptr_patch%edges%primal_edge_length(ile,ibe) * &
+    //    & ptr_patch%cells%edge_orientation(jc,jb,je)  / &
+    //    & ptr_patch%cells%area(jc,jb)
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // stencil call
+  //===------------------------------------------------------------------------------------------===/
+  LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
+                        dual_edge_length, tangent_orientation, nabla2_vec);
+  lapl.run();
+  lapl.CopyResultToHost(vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
+                        dual_edge_length, tangent_orientation, nabla2_vec);
+
+  if(dbg_out) {
+    dumpEdgeField("laplICONatlas_nabla2t1.txt", mesh, wrapper, nabla2t1_vec, level,
+                  wrapper.innerEdges(mesh));
+    dumpEdgeField("laplICONatlas_nabla2t2.txt", mesh, wrapper, nabla2t1_vec, level,
+                  wrapper.innerEdges(mesh));
+  }
+
+  //===------------------------------------------------------------------------------------------===//
+  // dumping a hopefully nice colorful divergence, curl & laplacian
+  //===------------------------------------------------------------------------------------------===//
+  dumpCellField("laplICONatlas_div.txt", mesh, wrapper, div_vec, level);
+  dumpNodeField("laplICONatlas_rot.txt", mesh, wrapper, rot_vec, level);
+  dumpEdgeField("laplICONatlas_out.txt", mesh, wrapper, nabla2_vec, level,
+                wrapper.innerEdges(mesh));
+
+  //===------------------------------------------------------------------------------------------===//
+  // measuring errors
+  //===------------------------------------------------------------------------------------------===//
+  {
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerCells(mesh), divVecSol, div_vec, level);
+    printf("[div] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  }
+  {
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerNodes(mesh), rotVecSol, rot_vec, level);
+    printf("[rot] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  }
+  {
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), lapVecSol, nabla2_vec, level);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  }
+
+  printf("----\n");
+
+  return 0;
+}
+
+namespace {
+
+void dumpMesh4Triplot(const atlas::Mesh& mesh, const std::string prefix,
+                      std::optional<AtlasToCartesian> wrapper) {
   auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
   const atlas::mesh::HybridElements::Connectivity& node_connectivity =
       mesh.cells().node_connectivity();
@@ -92,415 +552,17 @@ void debugDump(const atlas::Mesh& mesh, const std::string prefix) {
     sprintf(buf, "%sP.txt", prefix.c_str());
     FILE* fp = fopen(buf, "w+");
     for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-      double x = xy(nodeIdx, atlas::LON);
-      double y = xy(nodeIdx, atlas::LAT);
-      fprintf(fp, "%f %f \n", x, y);
+      if(wrapper == std::nullopt) {
+        double x = xy(nodeIdx, atlas::LON);
+        double y = xy(nodeIdx, atlas::LAT);
+        fprintf(fp, "%f %f \n", x, y);
+      } else {
+        auto [x, y] = wrapper.value().nodeLocation(nodeIdx);
+        fprintf(fp, "%f %f \n", x, y);
+      }
     }
     fclose(fp);
   }
-}
-
-int main() {
-  int w = 32;
-  int k_size = 1;
-  const int level = 0;
-  double lDomain = M_PI;
-
-  const bool dbg_out = true;
-
-  atlas::Mesh mesh;
-  mesh = AtlasMeshRect(w);
-  atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
-  atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
-  atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
-  debugDump(mesh, "atlasMesh");
-  // {
-  //   const auto& conn = mesh.nodes().edge_connectivity();
-  //   auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
-  //   for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-  //     if(conn.cols(nodeIdx) != 6) {
-  //       printf("%f %f %d\n", xy(nodeIdx, 0), xy(nodeIdx, 1), conn.cols(nodeIdx));
-  //     }
-  //   }
-  // }
-
-  const bool skewToEquilateral = true;
-  AtlasToCartesian wrapper(mesh);
-
-  if(dbg_out) {
-    dumpMesh(mesh, wrapper, "laplICONatlas_mesh.txt");
-    dumpDualMesh(mesh, wrapper, "laplICONatlas_dualMesh.txt");
-  }
-
-  const int edgesPerVertex = 6;
-  const int edgesPerCell = 3;
-
-  // current atlas mesh is not compatible with parallel computing
-  // atlas::functionspace::CellColumns fs_cells(mesh, atlas::option::levels(k_size));
-  // atlas::functionspace::NodeColumns fs_nodes(mesh, atlas::option::levels(k_size));
-  // atlas::functionspace::EdgeColumns fs_edges(mesh, atlas::option::levels(k_size));
-
-  //===------------------------------------------------------------------------------------------===//
-  // input field (field we want to take the laplacian of)
-  //===------------------------------------------------------------------------------------------===//
-  atlas::Field vec_F{"vec", atlas::array::DataType::real64(),
-                     atlas::array::make_shape(mesh.edges().size(), 1)};
-  atlasInterface::Field<double> vec = atlas::array::make_view<double, 2>(vec_F);
-  //    this is, confusingly, called vec_e, even though it is a scalar
-  //    _conceptually_, this can be regarded as a vector with implicit direction (presumably
-  //    normal to edge direction)
-
-  //===------------------------------------------------------------------------------------------===//
-  // output field (field containing the computed laplacian)
-  //===------------------------------------------------------------------------------------------===//
-  atlas::Field nabla2_vec_F{"nabla2_vec", atlas::array::DataType::real64(),
-                            atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> nabla2_vec = atlas::array::make_view<double, 2>(nabla2_vec_F);
-  // term 1 and term 2 of nabla for debugging
-  atlas::Field nabla2t1_vec_F{"nabla2t1_vec", atlas::array::DataType::real64(),
-                              atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> nabla2t1_vec = atlas::array::make_view<double, 2>(nabla2t1_vec_F);
-  atlas::Field nabla2t2_vec_F{"nabla2t2_vec", atlas::array::DataType::real64(),
-                              atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> nabla2t2_vec = atlas::array::make_view<double, 2>(nabla2t2_vec_F);
-  //    again, surprisingly enough, this is a scalar quantity even though the vector laplacian is
-  //    a laplacian.
-
-  //===------------------------------------------------------------------------------------------===//
-  // intermediary fields (curl/rot and div of vec_e)
-  //===------------------------------------------------------------------------------------------===//
-
-  // rotation (more commonly curl) of vec_e on vertices
-  //    I'm not entirely positive how one can take the curl of a scalar field (commonly a
-  //    undefined operation), however, since vec_e is _conceptually_ a vector this works out.
-  //    somehow.
-  atlas::Field rot_vec_F{"rot_vec", atlas::array::DataType::real64(),
-                         atlas::array::make_shape(mesh.nodes().size(), k_size)};
-  atlasInterface::Field<double> rot_vec = atlas::array::make_view<double, 2>(rot_vec_F);
-
-  // divergence of vec_e on cells
-  //    Again, not entirely sure how one can measure the divergence of scalars, but again, vec_e
-  //    is _conceptually_ a vector, so...
-  atlas::Field div_vec_F{"div_vec", atlas::array::DataType::real64(),
-                         atlas::array::make_shape(mesh.cells().size(), k_size)};
-  atlasInterface::Field<double> div_vec = atlas::array::make_view<double, 2>(div_vec_F);
-
-  //===------------------------------------------------------------------------------------------===//
-  // sparse dimensions for computing intermediary fields
-  //===------------------------------------------------------------------------------------------===//
-
-  // needed for the computation of the curl/rotation. according to documentation this needs to be:
-  // ! the appropriate dual cell based verts%edge_orientation
-  // ! is required to obtain the correct value for the
-  // ! application of Stokes theorem (which requires the scalar
-  // ! product of the vector field with the tangent unit vectors
-  // ! going around dual cell jv COUNTERCLOKWISE;
-  // ! since the positive direction for the vec_e components is
-  // ! not necessarily the one yelding counterclockwise rotation
-  // ! around dual cell jv, a correction coefficient (equal to +-1)
-  // ! is necessary, given by g%verts%edge_orientation
-
-  atlas::Field geofac_rot_F{"geofac_rot", atlas::array::DataType::real64(),
-                            atlas::array::make_shape(mesh.nodes().size(), k_size, edgesPerVertex)};
-  atlasInterface::SparseDimension<double> geofac_rot =
-      atlas::array::make_view<double, 3>(geofac_rot_F);
-  atlas::Field edge_orientation_vertex_F{
-      "edge_orientation_vertex", atlas::array::DataType::real64(),
-      atlas::array::make_shape(mesh.nodes().size(), k_size, edgesPerVertex)};
-  atlasInterface::SparseDimension<double> edge_orientation_vertex =
-      atlas::array::make_view<double, 3>(edge_orientation_vertex_F);
-
-  // needed for the computation of the curl/rotation. according to documentation this needs to be:
-  //   ! ...the appropriate cell based edge_orientation is required to
-  //   ! obtain the correct value for the application of Gauss theorem
-  //   ! (which requires the scalar product of the vector field with the
-  //   ! OUTWARD pointing unit vector with respect to cell jc; since the
-  //   ! positive direction for the vector components is not necessarily
-  //   ! the outward pointing one with respect to cell jc, a correction
-  //   ! coefficient (equal to +-1) is necessary, given by
-  //   ! ptr_patch%grid%cells%edge_orientation)
-
-  atlas::Field geofac_div_F{"geofac_div", atlas::array::DataType::real64(),
-                            atlas::array::make_shape(mesh.cells().size(), k_size, edgesPerCell)};
-  atlasInterface::SparseDimension<double> geofac_div =
-      atlas::array::make_view<double, 3>(geofac_div_F);
-  atlas::Field edge_orientation_cell_F{
-      "edge_orientation_cell", atlas::array::DataType::real64(),
-      atlas::array::make_shape(mesh.cells().size(), k_size, edgesPerCell)};
-  atlasInterface::SparseDimension<double> edge_orientation_cell =
-      atlas::array::make_view<double, 3>(edge_orientation_cell_F);
-
-  // //===------------------------------------------------------------------------------------------===//
-  // // fields containing geometric information
-  // //===------------------------------------------------------------------------------------------===//
-  atlas::Field tangent_orientation_F{"tangent_orientation", atlas::array::DataType::real64(),
-                                     atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> tangent_orientation =
-      atlas::array::make_view<double, 2>(tangent_orientation_F);
-  atlas::Field primal_edge_length_F{"primal_edge_length", atlas::array::DataType::real64(),
-                                    atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> primal_edge_length =
-      atlas::array::make_view<double, 2>(primal_edge_length_F);
-  atlas::Field dual_edge_length_F{"dual_edge_length", atlas::array::DataType::real64(),
-                                  atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> dual_edge_length =
-      atlas::array::make_view<double, 2>(dual_edge_length_F);
-  atlas::Field dual_normal_x_F{"dual_normal_x", atlas::array::DataType::real64(),
-                               atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> dual_normal_x = atlas::array::make_view<double, 2>(dual_normal_x_F);
-  atlas::Field dual_normal_y_F{"dual_normal_y", atlas::array::DataType::real64(),
-                               atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> dual_normal_y = atlas::array::make_view<double, 2>(dual_normal_y_F);
-  atlas::Field primal_normal_x_F{"primal_normal_x", atlas::array::DataType::real64(),
-                                 atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> primal_normal_x =
-      atlas::array::make_view<double, 2>(primal_normal_x_F);
-  atlas::Field primal_normal_y_F{"primal_normal_y", atlas::array::DataType::real64(),
-                                 atlas::array::make_shape(mesh.edges().size(), k_size)};
-  atlasInterface::Field<double> primal_normal_y =
-      atlas::array::make_view<double, 2>(primal_normal_y_F);
-
-  atlas::Field cell_area_F{"cell_area", atlas::array::DataType::real64(),
-                           atlas::array::make_shape(mesh.cells().size(), k_size)};
-  atlasInterface::Field<double> cell_area = atlas::array::make_view<double, 2>(cell_area_F);
-
-  atlas::Field dual_cell_area_F{"dual_cell_area", atlas::array::DataType::real64(),
-                                atlas::array::make_shape(mesh.nodes().size(), k_size)};
-  atlasInterface::Field<double> dual_cell_area =
-      atlas::array::make_view<double, 2>(dual_cell_area_F);
-
-  //===------------------------------------------------------------------------------------------===//
-  // initialize fields
-  //===------------------------------------------------------------------------------------------===//
-
-  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    rot_vec(nodeIdx, level) = 0;
-  }
-
-  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
-    div_vec(cellIdx, level) = 0;
-  }
-
-  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-    primal_edge_length(edgeIdx, level) = wrapper.edgeLength(mesh, edgeIdx);
-    dual_edge_length(edgeIdx, level) = wrapper.dualEdgeLength(mesh, edgeIdx);
-    tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
-    auto [nx, ny] = wrapper.primalNormal(mesh, edgeIdx);
-    primal_normal_x(edgeIdx, level) = nx * tangent_orientation(edgeIdx, level);
-    primal_normal_y(edgeIdx, level) = ny * tangent_orientation(edgeIdx, level);
-    // The primal normal, dual normal
-    // forms a left-handed coordinate system
-    dual_normal_x(edgeIdx, level) = ny;
-    dual_normal_y(edgeIdx, level) = -nx;
-  }
-
-  if(dbg_out) {
-    dumpEdgeField("laplICONatlas_EdgeLength.txt", mesh, wrapper, primal_edge_length, level);
-    dumpEdgeField("laplICONatlas_dualEdgeLength.txt", mesh, wrapper, dual_edge_length, level);
-    dumpEdgeField("laplICONatlas_nrm.txt", mesh, wrapper, primal_normal_x, primal_normal_y, level);
-    dumpEdgeField("laplICONatlas_dnrm.txt", mesh, wrapper, dual_normal_x, dual_normal_y, level);
-  }
-
-  auto wave = [](double px, double py) { return sin(px) * sin(py); };
-  auto constant = [](double px, double py) { return 1.; };
-  auto lin = [](double px, double py) { return px; };
-
-  auto sphericalHarmonic = [](double x, double y) -> std::tuple<double, double> {
-    return {0.25 * sqrt(105. / (2 * M_PI)) * cos(2 * x) * cos(y) * cos(y) * sin(y),
-            0.5 * sqrt(15. / (2 * M_PI)) * cos(x) * cos(y) * sin(y)};
-  };
-
-  // init zero and test function
-  FILE* fp = fopen("sphericalHarmonics.txt", "w+");
-  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-    auto [xm, ym] = wrapper.edgeMidpoint(mesh, edgeIdx);
-    auto [u, v] = sphericalHarmonic(xm, ym);
-    double normalWind = primal_normal_x(edgeIdx, level) * u + primal_normal_y(edgeIdx, level) * v;
-    vec(edgeIdx, level) = normalWind;
-    nabla2_vec(edgeIdx, level) = 0;
-    fprintf(fp, "%f %f %f %f\n", xm, ym, u, v);
-  }
-  fclose(fp);
-
-  // init geometric info for cells
-  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
-    cell_area(cellIdx, level) = wrapper.cellArea(mesh, cellIdx);
-  }
-  // init geometric info for vertices
-  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    dual_cell_area(nodeIdx, level) = wrapper.dualCellArea(mesh, nodeIdx);
-  }
-
-  if(dbg_out) {
-    dumpCellField("laplICONatlas_areaCell.txt", mesh, wrapper, cell_area, level);
-    dumpNodeField("laplICONatlas_areaCellDual.txt", mesh, wrapper, dual_cell_area, level);
-  }
-
-  // init edge orientations for vertices and cells
-  auto dot = [](const Vector& v1, const Vector& v2) {
-    return std::get<0>(v1) * std::get<0>(v2) + std::get<1>(v1) * std::get<1>(v2);
-  };
-
-  // +1 when the vector from this to the neigh-
-  // bor vertex has the same orientation as the
-  // tangent unit vector of the connecting edge.
-  // -1 otherwise
-
-  auto nodeNeighboursOfNode = [](atlas::Mesh const& m, int const& idx) {
-    const auto& conn_nodes_to_edge = m.nodes().edge_connectivity();
-    auto neighs = std::vector<std::tuple<int, int>>{};
-    for(int ne = 0; ne < conn_nodes_to_edge.cols(idx); ++ne) {
-      int nbh_edge_idx = conn_nodes_to_edge(idx, ne);
-      const auto& conn_edge_to_nodes = m.edges().node_connectivity();
-      for(int nn = 0; nn < conn_edge_to_nodes.cols(nbh_edge_idx); ++nn) {
-        int nbhNode = conn_edge_to_nodes(idx, nn);
-        if(nbhNode != idx) {
-          neighs.emplace_back(std::tuple<int, int>(nbh_edge_idx, nbhNode));
-        }
-      }
-    }
-    return neighs;
-  };
-
-  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    const atlas::mesh::Nodes::Connectivity& nodeEdgeConnectivity = mesh.nodes().edge_connectivity();
-    const atlas::mesh::HybridElements::Connectivity& edgeNodeConnectivity =
-        mesh.edges().node_connectivity();
-
-    const int missingVal = nodeEdgeConnectivity.missing_value();
-    int numNbh = nodeEdgeConnectivity.cols(nodeIdx);
-
-    if(numNbh != 6) {
-      continue;
-    }
-
-    auto nbh = nodeNeighboursOfNode(mesh, nodeIdx);
-    auto [cx, cy] = wrapper.nodeLocation(nodeIdx);
-
-    if(nbh.size() != 6) {
-      continue;
-    }
-
-    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
-      int edgeIdx = std::get<0>(nbh[nbhIdx]);
-      int farNodeIdx = std::get<1>(nbh[nbhIdx]);
-
-      int nodeIdxLo = edgeNodeConnectivity(edgeIdx, 0);
-      int nodeIdxHi = edgeNodeConnectivity(edgeIdx, 1);
-
-      auto [xLo, yLo] = wrapper.nodeLocation(nodeIdxLo);
-      auto [xHi, yHi] = wrapper.nodeLocation(nodeIdxHi);
-
-      auto [farX, farY] = wrapper.nodeLocation(farNodeIdx);
-
-      Vector edgeVec{xHi - xLo, yHi - yLo};
-      // its not quite clear how to implement this properly in Atlas
-      //        nodes have no node neighbors on an atlas grid
-      //        Vector dualNrm{cx - farX, cy - farY}; <- leads to oscillations in rot field
-      Vector dualNrm{dual_normal_x(edgeIdx, level), dual_normal_y(edgeIdx, level)};
-      edge_orientation_vertex(nodeIdx, nbhIdx, level) = sgn(dot(edgeVec, dualNrm));
-    }
-  }
-
-  // The orientation of the edge normal vector
-  // (the variable primal normal in the edges ta-
-  // ble) for the cell according to Gauss formula.
-  // It is equal to +1 if the normal to the edge
-  // is outwards from the cell, otherwise is -1.
-  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
-    const atlas::mesh::HybridElements::Connectivity& cellEdgeConnectivity =
-        mesh.cells().edge_connectivity();
-    auto [xm, ym] = wrapper.cellCircumcenter(mesh, cellIdx);
-
-    const int missingVal = cellEdgeConnectivity.missing_value();
-    int numNbh = cellEdgeConnectivity.cols(cellIdx);
-    assert(numNbh == edgesPerCell);
-
-    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
-      int edgeIdx = cellEdgeConnectivity(cellIdx, nbhIdx);
-      auto [emX, emY] = wrapper.edgeMidpoint(mesh, edgeIdx);
-      Vector toOutsdie{emX - xm, emY - ym};
-      Vector primal = {primal_normal_x(edgeIdx, level), primal_normal_y(edgeIdx, level)};
-      edge_orientation_cell(cellIdx, nbhIdx, level) = sgn(dot(toOutsdie, primal));
-    }
-    // explanation: the vector cellMidpoint -> edgeMidpoint is guaranteed to point outside. The
-    // dot product checks if the edge normal has the same orientation. edgeMidpoint is arbitrary,
-    // any point on e would work just as well
-  }
-
-  // init sparse quantities for div and rot
-  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    const atlas::mesh::Nodes::Connectivity& nodeEdgeConnectivity = mesh.nodes().edge_connectivity();
-
-    int numNbh = nodeEdgeConnectivity.cols(nodeIdx);
-    // assert(numNbh == edgesPerVertex);
-
-    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
-      int edgeIdx = nodeEdgeConnectivity(nodeIdx, nbhIdx);
-      geofac_rot(nodeIdx, nbhIdx, level) = dual_edge_length(edgeIdx, level) *
-                                           edge_orientation_vertex(nodeIdx, nbhIdx, level) /
-                                           dual_cell_area(nodeIdx, level);
-    }
-    // ptr_int%geofac_rot(jv,je,jb) =                &
-    //    & ptr_patch%edges%dual_edge_length(ile,ibe) * &
-    //    & ptr_patch%verts%edge_orientation(jv,jb,je)/ &
-    //    & ptr_patch%verts%dual_area(jv,jb) * REAL(ifac,wp)
-  }
-
-  for(int cellIdx = 0; cellIdx < mesh.cells().size(); cellIdx++) {
-    const atlas::mesh::HybridElements::Connectivity& cellEdgeConnectivity =
-        mesh.cells().edge_connectivity();
-
-    int numNbh = cellEdgeConnectivity.cols(cellIdx);
-    assert(numNbh == edgesPerCell);
-
-    for(int nbhIdx = 0; nbhIdx < numNbh; nbhIdx++) {
-      int edgeIdx = cellEdgeConnectivity(cellIdx, nbhIdx);
-      geofac_div(cellIdx, nbhIdx, level) = primal_edge_length(edgeIdx, level) *
-                                           edge_orientation_cell(cellIdx, nbhIdx, level) /
-                                           cell_area(cellIdx, level);
-    }
-    //  ptr_int%geofac_div(jc,je,jb) = &
-    //    & ptr_patch%edges%primal_edge_length(ile,ibe) * &
-    //    & ptr_patch%cells%edge_orientation(jc,jb,je)  / &
-    //    & ptr_patch%cells%area(jc,jb)
-  }
-
-  //===------------------------------------------------------------------------------------------===//
-  // stencil call
-  //===------------------------------------------------------------------------------------------===//
-
-  LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
-                        dual_edge_length, tangent_orientation, nabla2_vec);
-  lapl.run();
-  lapl.CopyResultToHost(vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
-                        dual_edge_length, tangent_orientation, nabla2_vec);
-
-  if(dbg_out) {
-    dumpCellField("laplICONatlas_div.txt", mesh, wrapper, div_vec, level);
-    dumpNodeField("laplICONatlas_rot.txt", mesh, wrapper, rot_vec, level);
-
-    dumpEdgeField("laplICONatlas_rotH.txt", mesh, wrapper, nabla2t1_vec, level,
-                  Orientation::Horizontal);
-    dumpEdgeField("laplICONatlas_rotV.txt", mesh, wrapper, nabla2t1_vec, level,
-                  Orientation::Vertical);
-    dumpEdgeField("laplICONatlas_rotD.txt", mesh, wrapper, nabla2t1_vec, level,
-                  Orientation::Diagonal);
-
-    dumpEdgeField("laplICONatlas_divH.txt", mesh, wrapper, nabla2t2_vec, level,
-                  Orientation::Horizontal);
-    dumpEdgeField("laplICONatlas_divV.txt", mesh, wrapper, nabla2t2_vec, level,
-                  Orientation::Vertical);
-    dumpEdgeField("laplICONatlas_divD.txt", mesh, wrapper, nabla2t2_vec, level,
-                  Orientation::Diagonal);
-  }
-
-  //===------------------------------------------------------------------------------------------===//
-  // dumping a hopefully nice colorful laplacian
-  //===------------------------------------------------------------------------------------------===//
-  dumpEdgeField("laplICONatlas_out.txt", mesh, wrapper, nabla2_vec, level);
-
-  return 0;
 }
 
 void dumpMesh(const atlas::Mesh& mesh, AtlasToCartesian& wrapper, const std::string& fname) {
@@ -573,7 +635,23 @@ void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCar
       continue;
     }
     auto [xm, ym] = wrapper.edgeMidpoint(mesh, edgeIdx);
-    fprintf(fp, "%f %f %f\n", xm, ym, field(edgeIdx, level));
+    fprintf(fp, "%f %f %f\n", xm, ym,
+            std::isfinite(field(edgeIdx, level)) ? field(edgeIdx, level) : 0.);
+  }
+  fclose(fp);
+}
+
+void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
+                   atlasInterface::Field<double>& field, int level, std::vector<int> edgeList,
+                   std::optional<Orientation> color) {
+  FILE* fp = fopen(fname.c_str(), "w+");
+  for(int edgeIdx : edgeList) {
+    if(color.has_value() && wrapper.edgeOrientation(mesh, edgeIdx) != color.value()) {
+      continue;
+    }
+    auto [xm, ym] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    fprintf(fp, "%f %f %f\n", xm, ym,
+            std::isfinite(field(edgeIdx, level)) ? field(edgeIdx, level) : 0.);
   }
   fclose(fp);
 }
@@ -591,3 +669,4 @@ void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCar
   }
   fclose(fp);
 }
+} // namespace
