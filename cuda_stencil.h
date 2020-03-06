@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "vector_types.h"
+
 #include <atlas/array.h>
 #include <atlas/mesh.h>
 

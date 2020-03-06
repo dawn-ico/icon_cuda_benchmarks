@@ -41,10 +41,12 @@
 #include <atlas/util/CoordinateEnums.h>
 
 // atlas interface for dawn generated code
-#include "interfaces/atlas_interface.hpp"
+#include "atlas_interface.hpp"
 
 // icon stencil
-#include "generated_iconLaplace.hpp"
+#include "cuda_stencil.h"
+
+#include "vector_types.h"
 
 // atlas utilities
 #include "AtlasCartesianWrapper.h"
