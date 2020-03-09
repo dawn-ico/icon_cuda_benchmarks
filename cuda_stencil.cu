@@ -187,19 +187,19 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
                              cellToEdge_);
 }
 
-LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
-                                   const atlasInterface::Field<double>& vec,
-                                   const atlasInterface::Field<double>& rotVec,
-                                   const atlasInterface::SparseDimension<double>& geofacRot,
-                                   const atlasInterface::Field<double>& divVec,
-                                   const atlasInterface::SparseDimension<double>& geofacDiv,
-                                   const atlasInterface::Field<double>& primal_edge_length,
-                                   const atlasInterface::Field<double>& dual_edge_length,
-                                   const atlasInterface::Field<double>& tangent_orientation,
-                                   const atlasInterface::Field<double>& nabla2t1vec,
-                                   const atlasInterface::Field<double>& nabla2t2vec,
-                                   const atlasInterface::Field<double>& nabla2vec)
-    : mesh_(mesh) {
+LaplacianStencil::laplacian_stencil::laplacian_stencil(
+    const atlas::Mesh& mesh, const atlasInterface::Field<double>& vec,
+    const atlasInterface::Field<double>& rotVec,
+    const atlasInterface::SparseDimension<double>& geofacRot,
+    const atlasInterface::Field<double>& divVec,
+    const atlasInterface::SparseDimension<double>& geofacDiv,
+    const atlasInterface::Field<double>& primal_edge_length,
+    const atlasInterface::Field<double>& dual_edge_length,
+    const atlasInterface::Field<double>& tangent_orientation,
+    const atlasInterface::Field<double>& nabla2t1vec,
+    const atlasInterface::Field<double>& nabla2t2vec,
+    const atlasInterface::Field<double>& nabla2vec)
+    : sbase("laplacian_stencil"), mesh_(mesh) {
 
   // alloc fields
   gpuErrchk(cudaMalloc((void**)&vec_, sizeof(double) * vec.numElements()));
@@ -242,7 +242,10 @@ LaplacianStencil::LaplacianStencil(const atlas::Mesh& mesh,
                        cudaMemcpyHostToDevice));
 }
 
-void LaplacianStencil::run() {
+void LaplacianStencil::laplacian_stencil::run() {
+  // starting timers
+  start();
+
   // stage over nodes
   {
     dim3 dG((mesh_.NumNodes() + BLOCK_SIZE - 1) / BLOCK_SIZE);
@@ -269,13 +272,15 @@ void LaplacianStencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
+
+  // stopping timers
+  pause();
 }
 
-void LaplacianStencil::CopyResultToHost(atlasInterface::Field<double>& rotVec,
-                                        atlasInterface::Field<double>& divVec,
-                                        atlasInterface::Field<double>& nabla2t1vec,
-                                        atlasInterface::Field<double>& nabla2t2vec,
-                                        atlasInterface::Field<double>& nabla2vec) const {
+void LaplacianStencil::laplacian_stencil::CopyResultToHost(
+    atlasInterface::Field<double>& rotVec, atlasInterface::Field<double>& divVec,
+    atlasInterface::Field<double>& nabla2t1vec, atlasInterface::Field<double>& nabla2t2vec,
+    atlasInterface::Field<double>& nabla2vec) const {
   gpuErrchk(cudaMemcpy((double*)rotVec.data(), rotVec_, sizeof(double) * rotVec.numElements(),
                        cudaMemcpyDeviceToHost));
   gpuErrchk(cudaMemcpy((double*)divVec.data(), divVec_, sizeof(double) * divVec.numElements(),
