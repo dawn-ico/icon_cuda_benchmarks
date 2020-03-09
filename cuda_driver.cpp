@@ -487,10 +487,10 @@ int main(int argc, char const* argv[]) {
   // stencil call
   //===------------------------------------------------------------------------------------------===/
   LaplacianStencil lapl(mesh, vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
-                        dual_edge_length, tangent_orientation, nabla2_vec);
+                        dual_edge_length, tangent_orientation, nabla2t1_vec, nabla2t2_vec,
+                        nabla2_vec);
   lapl.run();
-  lapl.CopyResultToHost(vec, rot_vec, geofac_rot, div_vec, geofac_div, primal_edge_length,
-                        dual_edge_length, tangent_orientation, nabla2_vec);
+  lapl.CopyResultToHost(rot_vec, div_vec, nabla2t1_vec, nabla2t2_vec, nabla2_vec);
 
   if(dbg_out) {
     dumpEdgeField("laplICONatlas_nabla2t1.txt", mesh, wrapper, nabla2t1_vec, level,

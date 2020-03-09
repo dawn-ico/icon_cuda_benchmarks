@@ -71,6 +71,8 @@ private:
   // out
   double* divVec_;
   double* rotVec_;
+  double* nabla2t1vec_;
+  double* nabla2t2vec_;
   double* nabla2vec_;
 
   // --------------------------
@@ -87,16 +89,14 @@ public:
                    const atlasInterface::Field<double>& primal_edge_length,
                    const atlasInterface::Field<double>& dual_edge_length,
                    const atlasInterface::Field<double>& tangent_orientation,
+                   const atlasInterface::Field<double>& nabla2t1vec,
+                   const atlasInterface::Field<double>& nabla2t2vec,
                    const atlasInterface::Field<double>& nabla2vec);
   void run();
 
-  void CopyResultToHost(const atlasInterface::Field<double>& vec,
-                        atlasInterface::Field<double>& rotVec,
-                        atlasInterface::SparseDimension<double>& geofacRot,
+  void CopyResultToHost(atlasInterface::Field<double>& rotVec,
                         atlasInterface::Field<double>& divVec,
-                        atlasInterface::SparseDimension<double>& geofacDiv,
-                        atlasInterface::Field<double>& primal_edge_length,
-                        atlasInterface::Field<double>& dual_edge_length,
-                        atlasInterface::Field<double>& tangent_orientation,
+                        atlasInterface::Field<double>& nabla2t1vec,
+                        atlasInterface::Field<double>& nabla2t2vec,
                         atlasInterface::Field<double>& nabla2vec) const;
 };
