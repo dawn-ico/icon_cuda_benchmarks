@@ -91,7 +91,7 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
   {
     // TODO FIX THIS
     double lhs = 0.;
-    double weights[2] = {1, -1}; // compile time literals, can be generated that way
+    double weights[2] = {-1, 1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < NODES_PER_EDGE; nbhIter++) { // reduceNodeToEdge
       int nbhIdx = __ldg(&edgeToNode[pidx * NODES_PER_EDGE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -105,7 +105,7 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
       nabla2t1vec[pidx] * __ldg(&tangent_orientation[pidx]) / __ldg(&primal_edge_length[pidx]);
   {
     double lhs = 0.;
-    double weights[2] = {1, -1}; // compile time literals, can be generated that way
+    double weights[2] = {-1, 1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < CELLS_PER_EDGE; nbhIter++) { // reduceCellToEdge
       int nbhIdx = __ldg(&edgeToCell[pidx * CELLS_PER_EDGE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
