@@ -89,7 +89,6 @@ __global__ void computeLapl(const int* __restrict__ edgeToNode, const double* __
     return;
   }
   {
-    // TODO FIX THIS
     double lhs = 0.;
     double weights[2] = {-1, 1}; // compile time literals, can be generated that way
     for(int nbhIter = 0; nbhIter < NODES_PER_EDGE; nbhIter++) { // reduceNodeToEdge
