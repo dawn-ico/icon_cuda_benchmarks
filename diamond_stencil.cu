@@ -240,7 +240,7 @@ __global__ void diamond(int numEdges, const int* __restrict__ ecvTable, double* 
   }
 }
 
-__global__ void nabla2(int numEdges, double* __restrict__ nabla2,
+__global__ void nabla2(int numEdges, double* __restrict__ nabla2, double* __restrict__ vn,
                        const double* __restrict__ inv_primal_edge_length,
                        const double* __restrict__ inv_vert_vert_length) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -249,8 +249,10 @@ __global__ void nabla2(int numEdges, double* __restrict__ nabla2,
   }
 
   nabla2[pidx] = nabla2[pidx] -
-                 8. * __ldg(&inv_primal_edge_length[pidx]) * __ldg(&inv_primal_edge_length[pidx]) -
-                 8. * __ldg(&inv_vert_vert_length[pidx]) * __ldg(&inv_vert_vert_length[pidx]);
+                 8. * __ldg(&vn[pidx]) * __ldg(&inv_primal_edge_length[pidx]) *
+                     __ldg(&inv_primal_edge_length[pidx]) -
+                 8. * __ldg(&vn[pidx]) * __ldg(&inv_vert_vert_length[pidx]) *
+                     __ldg(&inv_vert_vert_length[pidx]);
 }
 
 } // namespace
@@ -428,7 +430,7 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    nabla2<<<dG, dB>>>(mesh_.NumEdges(), z_nabla2_e_, inv_primal_edge_length_,
+    nabla2<<<dG, dB>>>(mesh_.NumEdges(), z_nabla2_e_, vn_, inv_primal_edge_length_,
                        inv_vert_vert_length_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
