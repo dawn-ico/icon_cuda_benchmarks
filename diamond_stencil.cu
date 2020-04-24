@@ -234,7 +234,7 @@ __global__ void diamond(int numEdges, const int* __restrict__ ecvTable, double* 
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
-      lhs += 4. * vn_vert[nbhIdx] * weights[nbhIter];
+      lhs += 4. * vn_vert[pidx * E_C_V_SIZE + nbhIter] * weights[nbhIter];
     }
     nabla2[pidx] = lhs;
   }
