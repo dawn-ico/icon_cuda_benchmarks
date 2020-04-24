@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 #
 #SBATCH --job-name="diamond_stencil_test"
 #SBATCH --time=00:05:00
@@ -14,4 +14,4 @@
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/project/c14/install/daint/atlas_install/release/cpu/lib
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/project/c14/install/daint/eckit_install/lib
 
-srun ./out 64
+srun -C gpu ./out 64
