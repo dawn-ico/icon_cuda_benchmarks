@@ -41,7 +41,7 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 #define BLOCK_SIZE 128
 #define DEVICE_MISSING_VALUE -1
 
-__global__ void compute_vn(int numEdges, const int* __restrict__ ecvTable,
+__global__ void compute_vn(int numEdges, int kSize, const int* __restrict__ ecvTable,
                            double* __restrict__ vn_vert, const double* __restrict__ u_vert,
                            const double* __restrict__ v_vert,
                            const double* __restrict__ primal_normal_vert_x,
@@ -51,14 +51,19 @@ __global__ void compute_vn(int numEdges, const int* __restrict__ ecvTable,
     return;
   }
   {
-    for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-      int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
-      if(nbhIdx == DEVICE_MISSING_VALUE) {
-        continue;
+    for(int kIter = 0; kIter < kSize; kIter++) {
+      int offset = kIter * numEdges;
+      for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
+        int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
+        if(nbhIdx == DEVICE_MISSING_VALUE) {
+          continue;
+        }
+        vn_vert[offset + pidx * E_C_V_SIZE + nbhIter] =
+            __ldg(&u_vert[offset + nbhIdx]) *
+                __ldg(&primal_normal_vert_x[offset + pidx * E_C_V_SIZE + nbhIter]) +
+            __ldg(&v_vert[offset + nbhIdx]) *
+                __ldg(&primal_normal_vert_y[offset + pidx * E_C_V_SIZE + nbhIter]);
       }
-      vn_vert[pidx * E_C_V_SIZE + nbhIter] =
-          __ldg(&u_vert[nbhIdx]) * __ldg(&primal_normal_vert_x[pidx * E_C_V_SIZE + nbhIter]) +
-          __ldg(&v_vert[nbhIdx]) * __ldg(&primal_normal_vert_y[pidx * E_C_V_SIZE + nbhIter]);
     }
   }
 }
@@ -214,8 +219,8 @@ __global__ void smagorinsky(int numEdges, double* __restrict__ kh_smag,
   kh_smag[pidx] = sqrt(kh_smag_1[pidx] + kh_smag_2[pidx]);
 }
 
-__global__ void diamond(int numEdges, const int* __restrict__ ecvTable, double* __restrict__ nabla2,
-                        const double* __restrict__ vn_vert,
+__global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTable,
+                        double* __restrict__ nabla2, const double* __restrict__ vn_vert,
                         const double* __restrict__ inv_primal_edge_length,
                         const double* __restrict__ inv_vert_vert_length) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -227,32 +232,37 @@ __global__ void diamond(int numEdges, const int* __restrict__ ecvTable, double* 
       __ldg(&inv_primal_edge_length[pidx]) * __ldg(&inv_primal_edge_length[pidx]),
       __ldg(&inv_vert_vert_length[pidx]) * __ldg(&inv_vert_vert_length[pidx]),
       __ldg(&inv_vert_vert_length[pidx]) * __ldg(&inv_vert_vert_length[pidx])};
-  {
+
+  for(int kIter = 0; kIter < kSize; kIter++) {
+    int offset = kIter * numEdges;
     double lhs = 0.;
     for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-      int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
+      int nbhIdx = __ldg(&ecvTable[offset + pidx * E_C_V_SIZE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
-      lhs += 4. * vn_vert[pidx * E_C_V_SIZE + nbhIter] * weights[nbhIter];
+      lhs += 4. * vn_vert[offset + pidx * E_C_V_SIZE + nbhIter] * weights[offset + nbhIter];
     }
     nabla2[pidx] = lhs;
   }
 }
 
-__global__ void nabla2(int numEdges, double* __restrict__ nabla2, double* __restrict__ vn,
-                       const double* __restrict__ inv_primal_edge_length,
+__global__ void nabla2(int numEdges, int kSize, double* __restrict__ nabla2,
+                       double* __restrict__ vn, const double* __restrict__ inv_primal_edge_length,
                        const double* __restrict__ inv_vert_vert_length) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-
-  nabla2[pidx] = nabla2[pidx] -
-                 8. * __ldg(&vn[pidx]) * __ldg(&inv_primal_edge_length[pidx]) *
-                     __ldg(&inv_primal_edge_length[pidx]) -
-                 8. * __ldg(&vn[pidx]) * __ldg(&inv_vert_vert_length[pidx]) *
-                     __ldg(&inv_vert_vert_length[pidx]);
+  for(int kIter = 0; kIter < kSize; kIter++) {
+    int offset = kIter * numEdges;
+    nabla2[offset + pidx] =
+        nabla2[offset + pidx] -
+        8. * __ldg(&vn[offset + pidx]) * __ldg(&inv_primal_edge_length[offset + pidx]) *
+            __ldg(&inv_primal_edge_length[offset + pidx]) -
+        8. * __ldg(&vn[offset + pidx]) * __ldg(&inv_vert_vert_length[offset + pidx]) *
+            __ldg(&inv_vert_vert_length[offset + pidx]);
+  }
 }
 
 } // namespace
@@ -344,7 +354,7 @@ DiamondStencil::diamond_stencil::diamond_stencil(
     const atlasInterface::Field<double>& dvt_tang, const atlasInterface::Field<double>& dvt_norm,
     const atlasInterface::Field<double>& kh_smag_1, const atlasInterface::Field<double>& kh_smag_2,
     const atlasInterface::Field<double>& kh_smag_e, const atlasInterface::Field<double>& z_nabla2_e)
-    : sbase("diamond_stencil"), mesh_(mesh) {
+    : sbase("diamond_stencil"), mesh_(mesh), kSize_(k_size) {
 
   initField(diff_multfac_smag, diff_multfac_smag_);
   initField(tangent_orientation, tangent_orientation_);
@@ -375,7 +385,7 @@ void DiamondStencil::diamond_stencil::run() {
     dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
 
-    compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), vn_vert_, u_vert_, v_vert_,
+    compute_vn<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), vn_vert_, u_vert_, v_vert_,
                            primal_normal_vert_x_, primal_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
@@ -425,12 +435,12 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    diamond<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), z_nabla2_e_, vn_vert_,
+    diamond<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), z_nabla2_e_, vn_vert_,
                         inv_primal_edge_length_, inv_vert_vert_length_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    nabla2<<<dG, dB>>>(mesh_.NumEdges(), z_nabla2_e_, vn_, inv_primal_edge_length_,
+    nabla2<<<dG, dB>>>(mesh_.NumEdges(), kSize_, z_nabla2_e_, vn_, inv_primal_edge_length_,
                        inv_vert_vert_length_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());

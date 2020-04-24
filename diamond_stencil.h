@@ -88,6 +88,11 @@ public:
     double* z_nabla2_e_;
 
     // --------------------------
+    // number of levels per field
+    // --------------------------
+    int kSize_ = 0;
+
+    // --------------------------
     // mesh
     // --------------------------
     GpuTriMesh mesh_;
