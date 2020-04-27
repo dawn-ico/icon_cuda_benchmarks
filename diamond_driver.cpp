@@ -271,16 +271,16 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
   //===------------------------------------------------------------------------------------------===//
-  dumpEdgeField("diamondLaplICONatlas_out.txt", mesh, wrapper, nabla2, 40,
+  dumpEdgeField("diamondLaplICONatlas_out.txt", mesh, wrapper, nabla2, k_size / 2,
                 wrapper.innerEdges(mesh));
-  dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, 40,
+  dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
                 wrapper.innerEdges(mesh));
 
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
   {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, 40);
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size / 2);
     // printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
     printf("%e %e %e %e\n", 180. / w, Linf, L1, L2);
   }
