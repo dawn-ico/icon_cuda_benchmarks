@@ -309,7 +309,7 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
 
     double lhs = 0.;
     for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-      int nbhIdx = __ldg(&ecvTable[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]);
+      int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
