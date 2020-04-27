@@ -408,7 +408,7 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
       mesh.edges().size(), E_C_V_SIZE, ecvTable_);
 }
 
-void reshape(double* input, double* output, int kSize, int numEdges, int sparseSize) {
+void reshape(const double* input, double* output, int kSize, int numEdges, int sparseSize) {
   // In: edges, klevels, sparse
   // Out: klevels, edges, sparse
 
@@ -430,7 +430,7 @@ void reshape(double* input, double* output, int kSize, int numEdges, int sparseS
 #define initSparseField(field, cudaStorage)                                                        \
   {                                                                                                \
     gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
-    double* reshaped = malloc(sizeof(double) * field.numElements());                               \
+    double* reshaped = (double*)malloc(sizeof(double) * field.numElements());                      \
     reshape(field.data(), reshaped, k_size, mesh.edges().size(), E_C_V_SIZE);                      \
     gpuErrchk(cudaMemcpy(cudaStorage, field.data(), sizeof(double) * field.numElements(),          \
                          cudaMemcpyHostToDevice));                                                 \
