@@ -97,10 +97,11 @@ __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += weights[nbhIter] * __ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                   __ldg(&dual_normal_vert_x[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]) +
-               __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
-                   __ldg(&dual_normal_vert_y[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]);
+        lhs += weights[nbhIter] *
+               (__ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
+                    __ldg(&dual_normal_vert_x[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]) +
+                __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
+                    __ldg(&dual_normal_vert_y[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]));
       }
       dvt_tang[edgesDenseKOffset + pidx] = lhs;
     }
@@ -144,10 +145,11 @@ __global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += weights[nbhIter] * __ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                   __ldg(&dual_normal_vert_x[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]) +
-               __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
-                   __ldg(&dual_normal_vert_y[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]);
+        lhs += weights[nbhIter] *
+               (__ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
+                    __ldg(&dual_normal_vert_x[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]) +
+                __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
+                    __ldg(&dual_normal_vert_y[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]));
       }
       dvt_norm[edgesDenseKOffset + pidx] = lhs;
     }
@@ -165,7 +167,7 @@ __global__ void smagorinsky_1(int numEdges, int numVertices, int kSize,
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
-      const int verticesDenseKOffset = kIter * numVertices;
+      const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
       double lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
@@ -173,7 +175,7 @@ __global__ void smagorinsky_1(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += vn_vert[verticesDenseKOffset + nbhIdx] * weights[nbhIter];
+        lhs += vn_vert[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter] * weights[nbhIter];
       }
       kh_smag_1[edgesDenseKOffset + pidx] = lhs;
     }
@@ -196,7 +198,7 @@ __global__ void smagorinsky_1_multitply_facs(int numEdges, int kSize,
     kh_smag_1[edgesDenseKOffset + pidx] =
         kh_smag_1[edgesDenseKOffset + pidx] *
             __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
-            __ldg(&tangent_orientation[edgesDenseKOffset + pidx]) -
+            __ldg(&tangent_orientation[edgesDenseKOffset + pidx]) +
         __ldg(&dvt_norm[edgesDenseKOffset + pidx]) *
             __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]);
   }
@@ -226,7 +228,7 @@ __global__ void smagorinsky_2(int numEdges, int numVertices, int kSize,
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
-      const int verticesDenseKOffset = kIter * numVertices;
+      const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
       double lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
@@ -234,7 +236,7 @@ __global__ void smagorinsky_2(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += vn_vert[verticesDenseKOffset + nbhIdx] * weights[nbhIter];
+        lhs += vn_vert[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter] * weights[nbhIter];
       }
       kh_smag_2[edgesDenseKOffset + pidx] = lhs;
     }
@@ -275,6 +277,7 @@ __global__ void smagorinsky_2_square(int numEdges, int kSize, double* __restrict
 }
 
 __global__ void smagorinsky(int numEdges, int kSize, double* __restrict__ kh_smag,
+                            const double* __restrict__ smag_fac,
                             const double* __restrict__ kh_smag_1,
                             const double* __restrict__ kh_smag_2) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -285,6 +288,7 @@ __global__ void smagorinsky(int numEdges, int kSize, double* __restrict__ kh_sma
     const int edgesDenseKOffset = kIter * numEdges;
 
     kh_smag[edgesDenseKOffset + pidx] =
+        smag_fac[edgesDenseKOffset + pidx] *
         sqrt(kh_smag_1[edgesDenseKOffset + pidx] + kh_smag_2[edgesDenseKOffset + pidx]);
   }
 }
@@ -557,7 +561,7 @@ void DiamondStencil::diamond_stencil::run() {
 
     smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_,
                                              inv_vert_vert_length_, inv_primal_edge_length_,
-                                             dvt_norm_);
+                                             dvt_tang_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -565,7 +569,8 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, kh_smag_1_, kh_smag_2_);
+    smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, diff_multfac_smag_, kh_smag_1_,
+                            kh_smag_2_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 

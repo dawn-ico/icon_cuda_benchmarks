@@ -54,7 +54,7 @@ int main(int argc, char const* argv[]) {
     return -1;
   }
   int w = atoi(argv[1]);
-  int k_size = 2;
+  int k_size = 10;
   double lDomain = M_PI;
 
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
@@ -284,8 +284,40 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   for(int i = 0; i < k_size; i++) {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, i);
-    // printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-    printf("%e %e %e %e\n", 180. / w, Linf, L1, L2);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  }
+
+  {
+    double Linf = 0.;
+
+    FILE* fp = fopen("kh_smag_ref.txt", "r");
+    for(int i = 0; i < k_size; i++) {
+      double L1 = 0.;
+      double L2 = 0.;
+      double minRef = std::numeric_limits<double>::max();
+      double maxRef = -std::numeric_limits<double>::max();
+      double minGpu = std::numeric_limits<double>::max();
+      double maxGpu = -std::numeric_limits<double>::max();
+      for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+        double in;
+        fscanf(fp, "%lf ", &in);
+        double dif = kh_smag(edgeIdx, i) - in;
+        Linf = fmax(fabs(dif), Linf);
+        L1 += fabs(dif);
+        L2 += dif * dif;
+
+        minRef = fmin(minRef, in);
+        maxRef = fmax(maxRef, in);
+        minGpu = fmin(minGpu, kh_smag(edgeIdx, i));
+        maxGpu = fmax(maxGpu, kh_smag(edgeIdx, i));
+      }
+      L1 /= mesh.edges().size();
+      L2 = sqrt(L2) / sqrt(mesh.edges().size());
+      fscanf(fp, "\n");
+      printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+      printf("range ref [%f %f], range gpu [%f %f]\n", minRef, maxRef, minGpu, maxGpu);
+    }
+    fclose(fp);
   }
 
   return 0;
