@@ -20,6 +20,7 @@
 #include <atlas/mesh/Nodes.h>
 #include <atlas/util/CoordinateEnums.h>
 
+#include <assert.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 
