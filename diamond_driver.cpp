@@ -54,7 +54,7 @@ int main(int argc, char const* argv[]) {
     return -1;
   }
   int w = atoi(argv[1]);
-  int k_size = 20;
+  int k_size = 2;
   double lDomain = M_PI;
 
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
@@ -271,16 +271,19 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
   //===------------------------------------------------------------------------------------------===//
-  dumpEdgeField("diamondLaplICONatlas_out.txt", mesh, wrapper, nabla2, k_size / 2,
+  dumpEdgeField("diamondLaplICONatlas_out0.txt", mesh, wrapper, nabla2, 0,
                 wrapper.innerEdges(mesh));
+  dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
+                wrapper.innerEdges(mesh));
+
   dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
                 wrapper.innerEdges(mesh));
 
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size / 2);
+  for(int i = 0; i < klevel; i++) {
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, i);
     // printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
     printf("%e %e %e %e\n", 180. / w, Linf, L1, L2);
   }
