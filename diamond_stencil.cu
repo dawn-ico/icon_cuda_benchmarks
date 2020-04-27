@@ -471,7 +471,7 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize, dvt_tang_, tangent_orientation_);
+    finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize_, dvt_tang_, tangent_orientation_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
