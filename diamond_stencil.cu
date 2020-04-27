@@ -408,9 +408,30 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
       mesh.edges().size(), E_C_V_SIZE, ecvTable_);
 }
 
+void reshape(double* input, double* output, int kSize, int numEdges, int sparseSize) {
+  // In: edges, klevels, sparse
+  // Out: klevels, edges, sparse
+
+  for(int edgeIdx = 0; edgeIdx < numEdges; edgeIdx++)
+    for(int kLevel = 0; kLevel < kSize; kLevel++)
+      for(int sparseIdx = 0; sparseIdx < sparseSize; sparseIdx++) {
+        output[kLevel * numEdges * sparseSize + edgeIdx * sparseSize + sparseIdx] =
+            input[edgeIdx * kSize * sparseSize + kLevel * sparseSize + sparseIdx];
+      }
+}
+
 #define initField(field, cudaStorage)                                                              \
   {                                                                                                \
     gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
+    gpuErrchk(cudaMemcpy(cudaStorage, field.data(), sizeof(double) * field.numElements(),          \
+                         cudaMemcpyHostToDevice));                                                 \
+  }
+
+#define initSparseField(field, cudaStorage)                                                        \
+  {                                                                                                \
+    gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
+    double* reshaped = malloc(sizeof(double) * field.numElements());                               \
+    reshape(field.data(), reshaped, k_size, mesh.edges().size(), E_C_V_SIZE);                      \
     gpuErrchk(cudaMemcpy(cudaStorage, field.data(), sizeof(double) * field.numElements(),          \
                          cudaMemcpyHostToDevice));                                                 \
   }
@@ -437,11 +458,11 @@ DiamondStencil::diamond_stencil::diamond_stencil(
   initField(inv_vert_vert_length, inv_vert_vert_length_);
   initField(u_vert, u_vert_);
   initField(v_vert, v_vert_);
-  initField(primal_normal_vert_x, primal_normal_vert_x_);
-  initField(primal_normal_vert_y, primal_normal_vert_y_);
-  initField(dual_normal_vert_x, dual_normal_vert_x_);
-  initField(dual_normal_vert_y, dual_normal_vert_y_);
-  initField(vn_vert, vn_vert_);
+  initSparseField(primal_normal_vert_x, primal_normal_vert_x_);
+  initSparseField(primal_normal_vert_y, primal_normal_vert_y_);
+  initSparseField(dual_normal_vert_x, dual_normal_vert_x_);
+  initSparseField(dual_normal_vert_y, dual_normal_vert_y_);
+  initSparseField(vn_vert, vn_vert_);
   initField(vn, vn_);
   initField(dvt_tang, dvt_tang_);
   initField(dvt_norm, dvt_norm_);
