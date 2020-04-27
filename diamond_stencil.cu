@@ -309,7 +309,7 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
 
     double lhs = 0.;
     for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-      int nbhIdx = __ldg(&ecvTable[offset + pidx * E_C_V_SIZE + nbhIter]);
+      int nbhIdx = __ldg(&ecvTable[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
@@ -460,8 +460,8 @@ void DiamondStencil::diamond_stencil::run() {
     dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
     dim3 dB(BLOCK_SIZE);
 
-    compute_vn<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), vn_vert_, u_vert_, v_vert_,
-                           primal_normal_vert_x_, primal_normal_vert_y_);
+    compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), vn_vert_,
+                           u_vert_, v_vert_, primal_normal_vert_x_, primal_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -481,13 +481,14 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), kSize, mesh_.ECVTable(), kh_smag_1_, vn_vert_);
+    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+                              kh_smag_1_, vn_vert_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kh_smag_1_, tangent_orientation_,
-                                             inv_vert_vert_length_, inv_primal_edge_length_,
-                                             dvt_norm_);
+    smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize, kh_smag_1_,
+                                             tangent_orientation_, inv_vert_vert_length_,
+                                             inv_primal_edge_length_, dvt_norm_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
