@@ -270,7 +270,7 @@ __global__ void smagorinsky_2_square(int numEdges, int kSize, double* __restrict
   }
 }
 
-__global__ void smagorinsky(int numEdges, double* __restrict__ kh_smag,
+__global__ void smagorinsky(int numEdges, int kSize, double* __restrict__ kh_smag,
                             const double* __restrict__ kh_smag_1,
                             const double* __restrict__ kh_smag_2) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -431,7 +431,6 @@ DiamondStencil::diamond_stencil::diamond_stencil(
     const atlasInterface::Field<double>& kh_smag_e, const atlasInterface::Field<double>& z_nabla2_e)
     : sbase("diamond_stencil"), mesh_(mesh), kSize_(k_size) {
 
-  // TODO: change mallocs (multiply by kSize)
   initField(diff_multfac_smag, diff_multfac_smag_);
   initField(tangent_orientation, tangent_orientation_);
   initField(inv_primal_edge_length, inv_primal_edge_length_);
@@ -456,8 +455,6 @@ void DiamondStencil::diamond_stencil::run() {
   // starting timers
   start();
 
-  // TODO: change calls to kernels, now need to provide kSize and sometimes numVertices
-
   // stage over edges
   {
     dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
@@ -468,21 +465,23 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), dvt_tang_, u_vert_, v_vert_,
-                                dual_normal_vert_x_, dual_normal_vert_y_);
+    reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+                                dvt_tang_, u_vert_, v_vert_, dual_normal_vert_x_,
+                                dual_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), dvt_tang_, tangent_orientation_);
+    finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize, dvt_tang_, tangent_orientation_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), dvt_norm_, u_vert_, v_vert_,
-                                dual_normal_vert_x_, dual_normal_vert_y_);
+    reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+                                dvt_norm_, u_vert_, v_vert_, dual_normal_vert_x_,
+                                dual_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), kh_smag_1_, vn_vert_);
+    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), kSize, mesh_.ECVTable(), kh_smag_1_, vn_vert_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -492,24 +491,26 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kh_smag_1_);
+    smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kSize, kh_smag_1_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2<<<dG, dB>>>(mesh_.NumEdges(), mesh_.ECVTable(), kh_smag_2_, vn_vert_);
+    smagorinsky_2<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
+                              kh_smag_2_, vn_vert_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kh_smag_2_, inv_vert_vert_length_,
-                                             inv_primal_edge_length_, dvt_norm_);
+    smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_,
+                                             inv_vert_vert_length_, inv_primal_edge_length_,
+                                             dvt_norm_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2_square<<<dG, dB>>>(mesh_.NumEdges(), kh_smag_2_);
+    smagorinsky_2_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kh_smag_e_, kh_smag_1_, kh_smag_2_);
+    smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, kh_smag_1_, kh_smag_2_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
