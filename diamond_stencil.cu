@@ -61,11 +61,14 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        vn_vert[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter] =
+
+        // int sparseIdx = pidx * kSize * E_C_V_SIZE + kIter * E_C_V_SIZE + nbhIter;
+        int sparseIdx = ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter;
+
+        vn_vert[sparseIdx] =
             __ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                __ldg(&primal_normal_vert_x[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]) +
-            __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
-                __ldg(&primal_normal_vert_y[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter]);
+                __ldg(&primal_normal_vert_x[sparseIdx]) +
+            __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) * __ldg(&primal_normal_vert_y[sparseIdx]);
       }
     }
   }
@@ -314,7 +317,9 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
-      lhs += 4. * vn_vert[ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter] * weights[nbhIter];
+      // int sparseIdx = pidx * kSize * E_C_V_SIZE + kIter * E_C_V_SIZE + nbhIter;
+      int sparseIdx = ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter;
+      lhs += 4. * vn_vert[sparseIdx] * weights[nbhIter];
     }
     nabla2[edgesDenseKOffset + pidx] = lhs;
   }
@@ -425,10 +430,32 @@ void reshape(const double* input, double* output, int kSize, int numEdges, int s
       }
 }
 
-#define initField(field, cudaStorage)                                                              \
+void reshape(const double* input, double* output, int kSize, int numEdges) {
+  // In: edges, klevels
+  // Out: klevels, edges
+
+  for(int edgeIdx = 0; edgeIdx < numEdges; edgeIdx++)
+    for(int kLevel = 0; kLevel < kSize; kLevel++) {
+      output[kLevel * numEdges + edgeIdx] = input[edgeIdx * kSize + kLevel];
+    }
+}
+
+void reshape_back(const double* input, double* output, int kSize, int numEdges) {
+  // In: klevels, edges
+  // Out: edges, klevels
+
+  for(int edgeIdx = 0; edgeIdx < numEdges; edgeIdx++)
+    for(int kLevel = 0; kLevel < kSize; kLevel++) {
+      output[edgeIdx * kSize + kLevel] = input[kLevel * numEdges + edgeIdx];
+    }
+}
+
+#define initField(field, cudaStorage, denseSize)                                                   \
   {                                                                                                \
+    double* reshaped = (double*)malloc(sizeof(double) * field.numElements());                      \
+    reshape(field.data(), reshaped, k_size, denseSize);                                            \
     gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
-    gpuErrchk(cudaMemcpy(cudaStorage, field.data(), sizeof(double) * field.numElements(),          \
+    gpuErrchk(cudaMemcpy(cudaStorage, reshaped, sizeof(double) * field.numElements(),              \
                          cudaMemcpyHostToDevice));                                                 \
   }
 
@@ -457,24 +484,26 @@ DiamondStencil::diamond_stencil::diamond_stencil(
     const atlasInterface::Field<double>& kh_smag_1, const atlasInterface::Field<double>& kh_smag_2,
     const atlasInterface::Field<double>& kh_smag_e, const atlasInterface::Field<double>& z_nabla2_e)
     : sbase("diamond_stencil"), mesh_(mesh), kSize_(k_size) {
-  initField(diff_multfac_smag, diff_multfac_smag_);
-  initField(tangent_orientation, tangent_orientation_);
-  initField(inv_primal_edge_length, inv_primal_edge_length_);
-  initField(inv_vert_vert_length, inv_vert_vert_length_);
-  initField(u_vert, u_vert_);
-  initField(v_vert, v_vert_);
+  initField(diff_multfac_smag, diff_multfac_smag_, mesh.edges().size());
+  initField(tangent_orientation, tangent_orientation_, mesh.edges().size());
+  initField(inv_primal_edge_length, inv_primal_edge_length_, mesh.edges().size());
+  initField(inv_vert_vert_length, inv_vert_vert_length_, mesh.edges().size());
+  initField(u_vert, u_vert_, mesh.nodes().size());
+  initField(v_vert, v_vert_, mesh.nodes().size());
+
   initSparseField(primal_normal_vert_x, primal_normal_vert_x_);
   initSparseField(primal_normal_vert_y, primal_normal_vert_y_);
   initSparseField(dual_normal_vert_x, dual_normal_vert_x_);
   initSparseField(dual_normal_vert_y, dual_normal_vert_y_);
   initSparseField(vn_vert, vn_vert_);
-  initField(vn, vn_);
-  initField(dvt_tang, dvt_tang_);
-  initField(dvt_norm, dvt_norm_);
-  initField(kh_smag_1, kh_smag_1_);
-  initField(kh_smag_2, kh_smag_2_);
-  initField(kh_smag_e, kh_smag_e_);
-  initField(z_nabla2_e, z_nabla2_e_);
+
+  initField(vn, vn_, mesh.edges().size());
+  initField(dvt_tang, dvt_tang_, mesh.edges().size());
+  initField(dvt_norm, dvt_norm_, mesh.edges().size());
+  initField(kh_smag_1, kh_smag_1_, mesh.edges().size());
+  initField(kh_smag_2, kh_smag_2_, mesh.edges().size());
+  initField(kh_smag_e, kh_smag_e_, mesh.edges().size());
+  initField(z_nabla2_e, z_nabla2_e_, mesh.edges().size());
 }
 
 void DiamondStencil::diamond_stencil::run() {
@@ -562,4 +591,14 @@ void DiamondStencil::diamond_stencil::CopyResultToHost(
                        sizeof(double) * kh_smag_e.numElements(), cudaMemcpyDeviceToHost));
   gpuErrchk(cudaMemcpy((double*)z_nabla2_e.data(), z_nabla2_e_,
                        sizeof(double) * z_nabla2_e.numElements(), cudaMemcpyDeviceToHost));
+
+  double* kh_smag_e_for_atlas = (double*)malloc(z_nabla2_e.numElements() * sizeof(double));
+  double* z_nabla2_e_for_atlas = (double*)malloc(z_nabla2_e.numElements() * sizeof(double));
+
+  reshape_back(kh_smag_e.data(), kh_smag_e_for_atlas, kSize_, mesh_.NumEdges());
+  reshape_back(z_nabla2_e.data(), z_nabla2_e_for_atlas, kSize_, mesh_.NumEdges());
+
+  memcpy((double*)kh_smag_e.data(), kh_smag_e_for_atlas, sizeof(double) * z_nabla2_e.numElements());
+  memcpy((double*)z_nabla2_e.data(), z_nabla2_e_for_atlas,
+         sizeof(double) * z_nabla2_e.numElements());
 }
