@@ -282,7 +282,7 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  for(int i = 0; i < klevel; i++) {
+  for(int i = 0; i < k_size; i++) {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, i);
     // printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
     printf("%e %e %e %e\n", 180. / w, Linf, L1, L2);
