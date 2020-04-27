@@ -416,6 +416,10 @@ void reshape(const double* input, double* output, int kSize, int numEdges, int s
   for(int edgeIdx = 0; edgeIdx < numEdges; edgeIdx++)
     for(int kLevel = 0; kLevel < kSize; kLevel++)
       for(int sparseIdx = 0; sparseIdx < sparseSize; sparseIdx++) {
+        int inIdx = edgeIdx * kSize * sparseSize + kLevel * sparseSize + sparseIdx;
+        int outIdx = kLevel * numEdges * sparseSize + edgeIdx * sparseSize + sparseIdx;
+        assert(inIdx < kSize * numEdges * sparseSize);
+        assert(outIdx < kSize * numEdges * sparseSize);
         output[kLevel * numEdges * sparseSize + edgeIdx * sparseSize + sparseIdx] =
             input[edgeIdx * kSize * sparseSize + kLevel * sparseSize + sparseIdx];
       }
@@ -430,10 +434,10 @@ void reshape(const double* input, double* output, int kSize, int numEdges, int s
 
 #define initSparseField(field, cudaStorage)                                                        \
   {                                                                                                \
-    gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
     double* reshaped = (double*)malloc(sizeof(double) * field.numElements());                      \
     assert(field.numElements() == k_size * mesh.edges().size() * E_C_V_SIZE);                      \
     reshape(field.data(), reshaped, k_size, mesh.edges().size(), E_C_V_SIZE);                      \
+    gpuErrchk(cudaMalloc((void**)&cudaStorage, sizeof(double) * field.numElements()));             \
     gpuErrchk(cudaMemcpy(cudaStorage, reshaped, sizeof(double) * field.numElements(),              \
                          cudaMemcpyHostToDevice));                                                 \
   }
@@ -453,7 +457,6 @@ DiamondStencil::diamond_stencil::diamond_stencil(
     const atlasInterface::Field<double>& kh_smag_1, const atlasInterface::Field<double>& kh_smag_2,
     const atlasInterface::Field<double>& kh_smag_e, const atlasInterface::Field<double>& z_nabla2_e)
     : sbase("diamond_stencil"), mesh_(mesh), kSize_(k_size) {
-
   initField(diff_multfac_smag, diff_multfac_smag_);
   initField(tangent_orientation, tangent_orientation_);
   initField(inv_primal_edge_length, inv_primal_edge_length_);

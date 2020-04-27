@@ -150,19 +150,19 @@ int main(int argc, char const* argv[]) {
   //  supposedly simply a copy of the edge normal in planar geometry (to be checked)
   //===------------------------------------------------------------------------------------------===//
   auto [primal_normal_x_F, primal_normal_x] =
-      MakeAtlasSparseField("primal_normal_x", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("primal_normal_x", mesh.edges().size(), verticesInDiamond);
   auto [primal_normal_y_F, primal_normal_y] =
-      MakeAtlasSparseField("primal_normal_y", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("primal_normal_y", mesh.edges().size(), verticesInDiamond);
   auto [dual_normal_x_F, dual_normal_x] =
-      MakeAtlasSparseField("dual_normal_x", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("dual_normal_x", mesh.edges().size(), verticesInDiamond);
   auto [dual_normal_y_F, dual_normal_y] =
-      MakeAtlasSparseField("dual_normal_y", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("dual_normal_y", mesh.edges().size(), verticesInDiamond);
 
   //===------------------------------------------------------------------------------------------===//
   // sparse dimension intermediary field for diamond
   //===------------------------------------------------------------------------------------------===//
   auto [vn_vert_F, vn_vert] =
-      MakeAtlasSparseField("vn_vert", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("vn_vert", mesh.edges().size(), verticesInDiamond);
 
   //===------------------------------------------------------------------------------------------===//
   // input (spherical harmonics) and analytical solutions for div, curl and Laplacian
@@ -266,7 +266,7 @@ int main(int argc, char const* argv[]) {
   lapl.run();
   lapl.CopyResultToHost(kh_smag, nabla2);
 
-  std::cout << "run time Laplacian" << lapl.get_time() << "\n";
+  std::cout << "run time Laplacian: " << lapl.get_time() << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
