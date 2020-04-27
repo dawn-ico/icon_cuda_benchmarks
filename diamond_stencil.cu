@@ -465,7 +465,7 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+    reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
                                 dvt_tang_, u_vert_, v_vert_, dual_normal_vert_x_,
                                 dual_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
@@ -475,24 +475,24 @@ void DiamondStencil::diamond_stencil::run() {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+    reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
                                 dvt_norm_, u_vert_, v_vert_, dual_normal_vert_x_,
                                 dual_normal_vert_y_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize, mesh_.ECVTable(),
+    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
                               kh_smag_1_, vn_vert_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize, kh_smag_1_,
+    smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_,
                                              tangent_orientation_, inv_vert_vert_length_,
                                              inv_primal_edge_length_, dvt_norm_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kSize, kh_smag_1_);
+    smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
