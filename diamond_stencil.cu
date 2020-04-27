@@ -435,8 +435,8 @@ void reshape(const double* input, double* output, int kSize, int numEdges, int s
     assert(field.numElements() == k_size * mesh.edges().size() * E_C_V_SIZE);                      \
     reshape(field.data(), reshaped, k_size, mesh.edges().size(), E_C_V_SIZE);                      \
     gpuErrchk(cudaMemcpy(cudaStorage, reshaped, sizeof(double) * field.numElements(),              \
-                         cudaMemcpyHostToDevice));
-}
+                         cudaMemcpyHostToDevice));                                                 \
+  }
 
 DiamondStencil::diamond_stencil::diamond_stencil(
     const atlas::Mesh& mesh, int k_size, const atlasInterface::Field<double>& diff_multfac_smag,
