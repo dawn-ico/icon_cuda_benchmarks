@@ -517,80 +517,78 @@ DiamondStencil::diamond_stencil::diamond_stencil(
 }
 
 void DiamondStencil::diamond_stencil::run() {
+  // stage over edges
+  dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
+  dim3 dB(BLOCK_SIZE);
+
   // starting timers
   start();
 
-  // stage over edges
-  {
-    dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    dim3 dB(BLOCK_SIZE);
+  compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), vn_vert_,
+                         u_vert_, v_vert_, primal_normal_vert_x_, primal_normal_vert_y_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), vn_vert_,
-                           u_vert_, v_vert_, primal_normal_vert_x_, primal_normal_vert_y_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
+                              dvt_tang_, u_vert_, v_vert_, dual_normal_vert_x_,
+                              dual_normal_vert_y_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                                dvt_tang_, u_vert_, v_vert_, dual_normal_vert_x_,
-                                dual_normal_vert_y_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize_, dvt_tang_, tangent_orientation_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize_, dvt_tang_, tangent_orientation_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
+                              dvt_norm_, u_vert_, v_vert_, dual_normal_vert_x_,
+                              dual_normal_vert_y_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                                dvt_norm_, u_vert_, v_vert_, dual_normal_vert_x_,
-                                dual_normal_vert_y_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
+                            kh_smag_1_, vn_vert_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              kh_smag_1_, vn_vert_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_,
+                                           tangent_orientation_, inv_vert_vert_length_,
+                                           inv_primal_edge_length_, dvt_norm_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_,
-                                             tangent_orientation_, inv_vert_vert_length_,
-                                             inv_primal_edge_length_, dvt_norm_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_1_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_2<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
+                            kh_smag_2_, vn_vert_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              kh_smag_2_, vn_vert_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_,
+                                           inv_vert_vert_length_, inv_primal_edge_length_,
+                                           dvt_tang_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_,
-                                             inv_vert_vert_length_, inv_primal_edge_length_,
-                                             dvt_tang_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky_2_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky_2_square<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, diff_multfac_smag_, kh_smag_1_,
+                          kh_smag_2_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, diff_multfac_smag_, kh_smag_1_,
-                            kh_smag_2_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
+  diamond<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), z_nabla2_e_, vn_vert_,
+                      inv_primal_edge_length_, inv_vert_vert_length_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
-    diamond<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), z_nabla2_e_, vn_vert_,
-                        inv_primal_edge_length_, inv_vert_vert_length_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
-
-    nabla2<<<dG, dB>>>(mesh_.NumEdges(), kSize_, z_nabla2_e_, vn_, inv_primal_edge_length_,
-                       inv_vert_vert_length_);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
-  }
+  nabla2<<<dG, dB>>>(mesh_.NumEdges(), kSize_, z_nabla2_e_, vn_, inv_primal_edge_length_,
+                     inv_vert_vert_length_);
+  gpuErrchk(cudaPeekAtLastError());
+  gpuErrchk(cudaDeviceSynchronize());
 
   // stopping timers
   pause();

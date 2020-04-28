@@ -58,19 +58,29 @@ int main(int argc, char const* argv[]) {
     return -1;
   }
   int w = atoi(argv[1]);
-  int k_size = 10;
+  int k_size = 128;
   dawn::float_type lDomain = M_PI;
+
+  time_t tic = clock();
 
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
   // like will certainly work too)
   const bool dbg_out = false;
+  const bool verbose = false;
   const bool readMeshFromDisk = false;
 
   atlas::Mesh mesh;
+  time_t meshgen_tic = clock();
   mesh = AtlasMeshRect(w);
   atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
   atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
   atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
+  time_t meshgen_toc = clock();
+
+  if(verbose) {
+    std::cout << "mesh generation took " << (meshgen_toc - meshgen_tic) / ((double)CLOCKS_PER_SEC)
+              << " seconds \n";
+  }
 
   // wrapper with various atlas helper functions
   AtlasToCartesian wrapper(mesh, true);
@@ -79,7 +89,7 @@ int main(int argc, char const* argv[]) {
   const int edgesPerCell = 3;
   const int verticesInDiamond = 4;
 
-  dumpMesh4Triplot(mesh, "atlas", wrapper);
+  // dumpMesh4Triplot(mesh, "atlas", wrapper);
 
   //===------------------------------------------------------------------------------------------===//
   // helper lambdas to readily construct atlas fields and views on one line
@@ -112,6 +122,8 @@ int main(int argc, char const* argv[]) {
 #endif
     return {field_F, atlas::array::make_view<dawn::float_type, 3>(field_F)};
   };
+
+  time_t alloc_tic = clock();
 
   //===------------------------------------------------------------------------------------------===//
   // input field (field we want to take the laplacian of)
@@ -182,6 +194,13 @@ int main(int argc, char const* argv[]) {
   auto [vn_vert_F, vn_vert] =
       MakeAtlasSparseField("vn_vert", mesh.edges().size(), verticesInDiamond);
 
+  time_t alloc_toc = clock();
+
+  if(verbose) {
+    std::cout << "allocating fields took " << (alloc_toc - alloc_tic) / ((double)CLOCKS_PER_SEC)
+              << " seconds \n";
+  }
+
   //===------------------------------------------------------------------------------------------===//
   // input (spherical harmonics) and analytical solutions for div, curl and Laplacian
   //===------------------------------------------------------------------------------------------===//
@@ -211,6 +230,15 @@ int main(int argc, char const* argv[]) {
     return -2 * sin(x) * sin(y);
   };
 
+  clock_t inout_tic = clock();
+
+  std::vector<std::tuple<dawn::float_type, dawn::float_type>> primal_normal_cache(
+      mesh.edges().size());
+
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    primal_normal_cache[edgeIdx] = wrapper.primalNormal(mesh, edgeIdx);
+  }
+
   for(int level = 0; level < k_size; level++) {
     for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
       auto [x, y] = wrapper.nodeLocation(nodeIdx);
@@ -221,7 +249,7 @@ int main(int argc, char const* argv[]) {
   }
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [nx, ny] = wrapper.primalNormal(mesh, edgeIdx);
+      auto [nx, ny] = primal_normal_cache[edgeIdx];
       auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
       auto [ui, vi] = sphericalHarmonic(x, y);
       // vn(edgeIdx, level) = ui * nx + vi * ny;
@@ -232,11 +260,21 @@ int main(int argc, char const* argv[]) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
       auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
       auto [ui, vi] = analyticalLaplacian(x, y);
-      auto [nx, ny] = wrapper.primalNormal(mesh, edgeIdx);
+      auto [nx, ny] = primal_normal_cache[edgeIdx];
+      ;
       nabla2_sol(edgeIdx, level) = analyticalScalarLaplacian(x, y);
       // nabla2_sol(edgeIdx, level) = ui * nx + vi * ny;
     }
   }
+
+  clock_t inout_toc = clock();
+
+  if(verbose) {
+    std::cout << "computing input and ref. solution took "
+              << (inout_toc - inout_tic) / ((double)CLOCKS_PER_SEC) << " seconds \n";
+  }
+
+  clock_t geom_tic = clock();
 
   //===------------------------------------------------------------------------------------------===//
   // initialize geometrical info on edges
@@ -244,10 +282,18 @@ int main(int argc, char const* argv[]) {
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
       inv_primal_edge_length(edgeIdx, level) = 1. / wrapper.edgeLength(mesh, edgeIdx);
-      dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
+      // dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
+      dawn::float_type vert_vert_length = sqrt(3.) * wrapper.edgeLength(mesh, edgeIdx);
       inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
       tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
     }
+  }
+
+  clock_t geom_toc = clock();
+
+  if(verbose) {
+    std::cout << "geometric info on edges took " << (geom_toc - geom_tic) / ((double)CLOCKS_PER_SEC)
+              << " seconds \n";
   }
 
   //===------------------------------------------------------------------------------------------===//
@@ -255,7 +301,7 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [nx, ny] = wrapper.primalNormal(mesh, edgeIdx);
+      auto [nx, ny] = primal_normal_cache[edgeIdx];
 
       for(int nbhIdx = 0; nbhIdx < verticesInDiamond; nbhIdx++) {
         primal_normal_x(edgeIdx, nbhIdx, level) = 1.;
@@ -280,6 +326,12 @@ int main(int argc, char const* argv[]) {
     }
   }
 
+  time_t toc = clock();
+
+  if(verbose) {
+    std::cout << "initialization took " << (toc - tic) / ((double)CLOCKS_PER_SEC) << "seconds \n";
+  }
+
   //===------------------------------------------------------------------------------------------===//
   // stencil call
   //===------------------------------------------------------------------------------------------===/
@@ -287,10 +339,15 @@ int main(int argc, char const* argv[]) {
       mesh, k_size, diff_multfac_smag, tangent_orientation, inv_primal_edge_length,
       inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
       vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
-  lapl.run();
+
+  const int nruns = 100;
+  for(int i = 0; i < nruns; i++) {
+    lapl.run();
+  }
   lapl.CopyResultToHost(kh_smag, nabla2);
 
-  std::cout << "run time Laplacian: " << lapl.get_time() << "\n";
+  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << lapl.get_time() / nruns
+            << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
@@ -324,21 +381,26 @@ MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::flo
   dawn::float_type Linf = 0.;
   dawn::float_type L1 = 0.;
   dawn::float_type L2 = 0.;
+
   FILE* fp = fopen(refFname.c_str(), "r");
+  std::vector<dawn::float_type> refVec(num_edges);
+  for(int edgeIdx = 0; edgeIdx < num_edges; edgeIdx++) {
+    double in;
+    fscanf(fp, "%lf ", &in);
+    refVec[edgeIdx] = in;
+  }
+  fclose(fp);
+
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < num_edges; edgeIdx++) {
-      double in;
-      fscanf(fp, "%lf ", &in);
-      dawn::float_type dif = sol(edgeIdx, level) - in;
+      dawn::float_type dif = sol(edgeIdx, level) - refVec[edgeIdx];
       Linf = fmax(fabs(dif), Linf);
       L1 += fabs(dif);
       L2 += dif * dif;
     }
-    fscanf(fp, "\n");
   }
   L1 /= (num_edges * k_size);
   L2 = sqrt(L2) / sqrt(num_edges * k_size);
-  fclose(fp);
   return {Linf, L1, L2};
 }
 
