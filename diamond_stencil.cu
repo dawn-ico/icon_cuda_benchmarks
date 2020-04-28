@@ -43,10 +43,11 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 #define DEVICE_MISSING_VALUE -1
 
 __global__ void compute_vn(int numEdges, int numVertices, int kSize,
-                           const int* __restrict__ ecvTable, double* __restrict__ vn_vert,
-                           const double* __restrict__ u_vert, const double* __restrict__ v_vert,
-                           const double* __restrict__ primal_normal_vert_x,
-                           const double* __restrict__ primal_normal_vert_y) {
+                           const int* __restrict__ ecvTable, dawn::float_type* __restrict__ vn_vert,
+                           const dawn::float_type* __restrict__ u_vert,
+                           const dawn::float_type* __restrict__ v_vert,
+                           const dawn::float_type* __restrict__ primal_normal_vert_x,
+                           const dawn::float_type* __restrict__ primal_normal_vert_y) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -75,23 +76,24 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
 }
 
 __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
-                                const int* __restrict__ ecvTable, double* __restrict__ dvt_tang,
-                                const double* __restrict__ u_vert,
-                                const double* __restrict__ v_vert,
-                                const double* __restrict__ dual_normal_vert_x,
-                                const double* __restrict__ dual_normal_vert_y) {
+                                const int* __restrict__ ecvTable,
+                                dawn::float_type* __restrict__ dvt_tang,
+                                const dawn::float_type* __restrict__ u_vert,
+                                const dawn::float_type* __restrict__ v_vert,
+                                const dawn::float_type* __restrict__ dual_normal_vert_x,
+                                const dawn::float_type* __restrict__ dual_normal_vert_y) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-  const double weights[E_C_V_SIZE] = {-1., 1., 0., 0.};
+  const dawn::float_type weights[E_C_V_SIZE] = {-1., 1., 0., 0.};
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
       const int verticesDenseKOffset = kIter * numVertices;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-      double lhs = 0.;
+      dawn::float_type lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -108,8 +110,8 @@ __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
   }
 }
 
-__global__ void finish_dvt_tang(int numEdges, int kSize, double* __restrict__ dvt_tang,
-                                const double* __restrict__ tangent_orientation) {
+__global__ void finish_dvt_tang(int numEdges, int kSize, dawn::float_type* __restrict__ dvt_tang,
+                                const dawn::float_type* __restrict__ tangent_orientation) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -123,23 +125,24 @@ __global__ void finish_dvt_tang(int numEdges, int kSize, double* __restrict__ dv
 }
 
 __global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
-                                const int* __restrict__ ecvTable, double* __restrict__ dvt_norm,
-                                const double* __restrict__ u_vert,
-                                const double* __restrict__ v_vert,
-                                const double* __restrict__ dual_normal_vert_x,
-                                const double* __restrict__ dual_normal_vert_y) {
+                                const int* __restrict__ ecvTable,
+                                dawn::float_type* __restrict__ dvt_norm,
+                                const dawn::float_type* __restrict__ u_vert,
+                                const dawn::float_type* __restrict__ v_vert,
+                                const dawn::float_type* __restrict__ dual_normal_vert_x,
+                                const dawn::float_type* __restrict__ dual_normal_vert_y) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-  const double weights[E_C_V_SIZE] = {0., 0., -1., 1.};
+  const dawn::float_type weights[E_C_V_SIZE] = {0., 0., -1., 1.};
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
       const int verticesDenseKOffset = kIter * numVertices;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-      double lhs = 0.;
+      dawn::float_type lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -157,19 +160,20 @@ __global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
 }
 
 __global__ void smagorinsky_1(int numEdges, int numVertices, int kSize,
-                              const int* __restrict__ ecvTable, double* __restrict__ kh_smag_1,
-                              const double* __restrict__ vn_vert) {
+                              const int* __restrict__ ecvTable,
+                              dawn::float_type* __restrict__ kh_smag_1,
+                              const dawn::float_type* __restrict__ vn_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-  double weights[E_C_V_SIZE] = {-1., 1., 0., 0.};
+  dawn::float_type weights[E_C_V_SIZE] = {-1., 1., 0., 0.};
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-      double lhs = 0.;
+      dawn::float_type lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -182,12 +186,12 @@ __global__ void smagorinsky_1(int numEdges, int numVertices, int kSize,
   }
 } // namespace
 
-__global__ void smagorinsky_1_multitply_facs(int numEdges, int kSize,
-                                             double* __restrict__ kh_smag_1,
-                                             const double* __restrict__ tangent_orientation,
-                                             const double* __restrict__ inv_vert_vert_length,
-                                             const double* __restrict__ inv_primal_edge_length,
-                                             const double* __restrict__ dvt_norm) {
+__global__ void
+smagorinsky_1_multitply_facs(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_1,
+                             const dawn::float_type* __restrict__ tangent_orientation,
+                             const dawn::float_type* __restrict__ inv_vert_vert_length,
+                             const dawn::float_type* __restrict__ inv_primal_edge_length,
+                             const dawn::float_type* __restrict__ dvt_norm) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -204,7 +208,8 @@ __global__ void smagorinsky_1_multitply_facs(int numEdges, int kSize,
   }
 }
 
-__global__ void smagorinsky_1_square(int numEdges, int kSize, double* __restrict__ kh_smag_1) {
+__global__ void smagorinsky_1_square(int numEdges, int kSize,
+                                     dawn::float_type* __restrict__ kh_smag_1) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -218,19 +223,20 @@ __global__ void smagorinsky_1_square(int numEdges, int kSize, double* __restrict
 }
 
 __global__ void smagorinsky_2(int numEdges, int numVertices, int kSize,
-                              const int* __restrict__ ecvTable, double* __restrict__ kh_smag_2,
-                              const double* __restrict__ vn_vert) {
+                              const int* __restrict__ ecvTable,
+                              dawn::float_type* __restrict__ kh_smag_2,
+                              const dawn::float_type* __restrict__ vn_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-  const double weights[E_C_V_SIZE] = {0., 0., -1., 1.};
+  const dawn::float_type weights[E_C_V_SIZE] = {0., 0., -1., 1.};
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-      double lhs = 0.;
+      dawn::float_type lhs = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -243,11 +249,11 @@ __global__ void smagorinsky_2(int numEdges, int numVertices, int kSize,
   }
 }
 
-__global__ void smagorinsky_2_multitply_facs(int numEdges, int kSize,
-                                             double* __restrict__ kh_smag_2,
-                                             const double* __restrict__ inv_vert_vert_length,
-                                             const double* __restrict__ inv_primal_edge_length,
-                                             const double* __restrict__ dvt_tang) {
+__global__ void
+smagorinsky_2_multitply_facs(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_2,
+                             const dawn::float_type* __restrict__ inv_vert_vert_length,
+                             const dawn::float_type* __restrict__ inv_primal_edge_length,
+                             const dawn::float_type* __restrict__ dvt_tang) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -263,7 +269,8 @@ __global__ void smagorinsky_2_multitply_facs(int numEdges, int kSize,
   }
 }
 
-__global__ void smagorinsky_2_square(int numEdges, int kSize, double* __restrict__ kh_smag_2) {
+__global__ void smagorinsky_2_square(int numEdges, int kSize,
+                                     dawn::float_type* __restrict__ kh_smag_2) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -276,10 +283,10 @@ __global__ void smagorinsky_2_square(int numEdges, int kSize, double* __restrict
   }
 }
 
-__global__ void smagorinsky(int numEdges, int kSize, double* __restrict__ kh_smag,
-                            const double* __restrict__ smag_fac,
-                            const double* __restrict__ kh_smag_1,
-                            const double* __restrict__ kh_smag_2) {
+__global__ void smagorinsky(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag,
+                            const dawn::float_type* __restrict__ smag_fac,
+                            const dawn::float_type* __restrict__ kh_smag_1,
+                            const dawn::float_type* __restrict__ kh_smag_2) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -294,9 +301,10 @@ __global__ void smagorinsky(int numEdges, int kSize, double* __restrict__ kh_sma
 }
 
 __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTable,
-                        double* __restrict__ nabla2, const double* __restrict__ vn_vert,
-                        const double* __restrict__ inv_primal_edge_length,
-                        const double* __restrict__ inv_vert_vert_length) {
+                        dawn::float_type* __restrict__ nabla2,
+                        const dawn::float_type* __restrict__ vn_vert,
+                        const dawn::float_type* __restrict__ inv_primal_edge_length,
+                        const dawn::float_type* __restrict__ inv_vert_vert_length) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -305,7 +313,7 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
     const int edgesDenseKOffset = kIter * numEdges;
     const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-    const double weights[E_C_V_SIZE] = {
+    const dawn::float_type weights[E_C_V_SIZE] = {
         __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
             __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]),
         __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
@@ -315,7 +323,7 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
         __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) *
             __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx])};
 
-    double lhs = 0.;
+    dawn::float_type lhs = 0.;
     for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
       int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
       if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -329,9 +337,10 @@ __global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTabl
   }
 }
 
-__global__ void nabla2(int numEdges, int kSize, double* __restrict__ nabla2,
-                       double* __restrict__ vn, const double* __restrict__ inv_primal_edge_length,
-                       const double* __restrict__ inv_vert_vert_length) {
+__global__ void nabla2(int numEdges, int kSize, dawn::float_type* __restrict__ nabla2,
+                       dawn::float_type* __restrict__ vn,
+                       const dawn::float_type* __restrict__ inv_primal_edge_length,
+                       const dawn::float_type* __restrict__ inv_vert_vert_length) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -401,24 +410,15 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
   numEdges_ = mesh.edges().size();
   numCells_ = mesh.cells().size();
 
-  // position vector
-  gpuErrchk(cudaMalloc((void**)&pos_, sizeof(double2) * mesh.nodes().size()));
-
   gpuErrchk(cudaMalloc((void**)&ecvTable_, sizeof(int) * mesh.edges().size() * E_C_V_SIZE));
-  // copy position vector
-  std::vector<double2> pHost;
-  auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
-  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    pHost.push_back({xy(nodeIdx, atlas::LON), xy(nodeIdx, atlas::LAT)});
-  }
-  gpuErrchk(cudaMemcpy(pos_, pHost.data(), sizeof(double2) * mesh.nodes().size(),
-                       cudaMemcpyHostToDevice));
+
   generateNbhTable(
       mesh, {dawn::LocationType::Edges, dawn::LocationType::Cells, dawn::LocationType::Vertices},
       mesh.edges().size(), E_C_V_SIZE, ecvTable_);
 }
 
-void reshape(const double* input, double* output, int kSize, int numEdges, int sparseSize) {
+void reshape(const dawn::float_type* input, dawn::float_type* output, int kSize, int numEdges,
+             int sparseSize) {
   // In: edges, klevels, sparse
   // Out: klevels, edges, sparse
 
@@ -430,7 +430,7 @@ void reshape(const double* input, double* output, int kSize, int numEdges, int s
       }
 }
 
-void reshape(const double* input, double* output, int kSize, int numEdges) {
+void reshape(const dawn::float_type* input, dawn::float_type* output, int kSize, int numEdges) {
   // In: edges, klevels
   // Out: klevels, edges
 
@@ -440,7 +440,8 @@ void reshape(const double* input, double* output, int kSize, int numEdges) {
     }
 }
 
-void reshape_back(const double* input, double* output, int kSize, int numEdges) {
+void reshape_back(const dawn::float_type* input, dawn::float_type* output, int kSize,
+                  int numEdges) {
   // In: klevels, edges
   // Out: edges, klevels
 
@@ -449,39 +450,45 @@ void reshape_back(const double* input, double* output, int kSize, int numEdges) 
       output[edgeIdx * kSize + kLevel] = input[kLevel * numEdges + edgeIdx];
     }
 }
-void initField(const atlasInterface::Field<double>& field, double** cudaStorage, int denseSize,
-               int kSize) {
-  double* reshaped = new double[field.numElements()];
+void initField(const atlasInterface::Field<dawn::float_type>& field, dawn::float_type** cudaStorage,
+               int denseSize, int kSize) {
+  dawn::float_type* reshaped = new dawn::float_type[field.numElements()];
   reshape(field.data(), reshaped, kSize, denseSize);
-  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(double) * field.numElements()));
-  gpuErrchk(cudaMemcpy(*cudaStorage, reshaped, sizeof(double) * field.numElements(),
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(dawn::float_type) * field.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, reshaped, sizeof(dawn::float_type) * field.numElements(),
                        cudaMemcpyHostToDevice));
   delete[] reshaped;
 }
-void initSparseField(const atlasInterface::SparseDimension<double>& field, double** cudaStorage,
-                     int denseSize, int sparseSize, int kSize) {
-  double* reshaped = new double[field.numElements()];
+void initSparseField(const atlasInterface::SparseDimension<dawn::float_type>& field,
+                     dawn::float_type** cudaStorage, int denseSize, int sparseSize, int kSize) {
+  dawn::float_type* reshaped = new dawn::float_type[field.numElements()];
   reshape(field.data(), reshaped, kSize, denseSize, sparseSize);
-  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(double) * field.numElements()));
-  gpuErrchk(cudaMemcpy(*cudaStorage, reshaped, sizeof(double) * field.numElements(),
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(dawn::float_type) * field.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, reshaped, sizeof(dawn::float_type) * field.numElements(),
                        cudaMemcpyHostToDevice));
   delete[] reshaped;
 }
 
 DiamondStencil::diamond_stencil::diamond_stencil(
-    const atlas::Mesh& mesh, int k_size, const atlasInterface::Field<double>& diff_multfac_smag,
-    const atlasInterface::Field<double>& tangent_orientation,
-    const atlasInterface::Field<double>& inv_primal_edge_length,
-    const atlasInterface::Field<double>& inv_vert_vert_length,
-    const atlasInterface::Field<double>& u_vert, const atlasInterface::Field<double>& v_vert,
-    const atlasInterface::SparseDimension<double>& primal_normal_vert_x,
-    const atlasInterface::SparseDimension<double>& primal_normal_vert_y,
-    const atlasInterface::SparseDimension<double>& dual_normal_vert_x,
-    const atlasInterface::SparseDimension<double>& dual_normal_vert_y,
-    const atlasInterface::SparseDimension<double>& vn_vert, const atlasInterface::Field<double>& vn,
-    const atlasInterface::Field<double>& dvt_tang, const atlasInterface::Field<double>& dvt_norm,
-    const atlasInterface::Field<double>& kh_smag_1, const atlasInterface::Field<double>& kh_smag_2,
-    const atlasInterface::Field<double>& kh_smag_e, const atlasInterface::Field<double>& z_nabla2_e)
+    const atlas::Mesh& mesh, int k_size,
+    const atlasInterface::Field<dawn::float_type>& diff_multfac_smag,
+    const atlasInterface::Field<dawn::float_type>& tangent_orientation,
+    const atlasInterface::Field<dawn::float_type>& inv_primal_edge_length,
+    const atlasInterface::Field<dawn::float_type>& inv_vert_vert_length,
+    const atlasInterface::Field<dawn::float_type>& u_vert,
+    const atlasInterface::Field<dawn::float_type>& v_vert,
+    const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_x,
+    const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_y,
+    const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_x,
+    const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_y,
+    const atlasInterface::SparseDimension<dawn::float_type>& vn_vert,
+    const atlasInterface::Field<dawn::float_type>& vn,
+    const atlasInterface::Field<dawn::float_type>& dvt_tang,
+    const atlasInterface::Field<dawn::float_type>& dvt_norm,
+    const atlasInterface::Field<dawn::float_type>& kh_smag_1,
+    const atlasInterface::Field<dawn::float_type>& kh_smag_2,
+    const atlasInterface::Field<dawn::float_type>& kh_smag_e,
+    const atlasInterface::Field<dawn::float_type>& z_nabla2_e)
     : sbase("diamond_stencil"), mesh_(mesh), kSize_(k_size) {
   initField(diff_multfac_smag, &diff_multfac_smag_, mesh.edges().size(), k_size);
   initField(tangent_orientation, &tangent_orientation_, mesh.edges().size(), k_size);
@@ -590,21 +597,24 @@ void DiamondStencil::diamond_stencil::run() {
 }
 
 void DiamondStencil::diamond_stencil::CopyResultToHost(
-    atlasInterface::Field<double>& kh_smag_e, atlasInterface::Field<double>& z_nabla2_e) const {
-  gpuErrchk(cudaMemcpy((double*)kh_smag_e.data(), kh_smag_e_,
-                       sizeof(double) * kh_smag_e.numElements(), cudaMemcpyDeviceToHost));
-  gpuErrchk(cudaMemcpy((double*)z_nabla2_e.data(), z_nabla2_e_,
-                       sizeof(double) * z_nabla2_e.numElements(), cudaMemcpyDeviceToHost));
+    atlasInterface::Field<dawn::float_type>& kh_smag_e,
+    atlasInterface::Field<dawn::float_type>& z_nabla2_e) const {
+  gpuErrchk(cudaMemcpy((dawn::float_type*)kh_smag_e.data(), kh_smag_e_,
+                       sizeof(dawn::float_type) * kh_smag_e.numElements(), cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy((dawn::float_type*)z_nabla2_e.data(), z_nabla2_e_,
+                       sizeof(dawn::float_type) * z_nabla2_e.numElements(),
+                       cudaMemcpyDeviceToHost));
 
-  double* kh_smag_e_for_atlas = new double[kh_smag_e.numElements()];
-  double* z_nabla2_e_for_atlas = new double[z_nabla2_e.numElements()];
+  dawn::float_type* kh_smag_e_for_atlas = new dawn::float_type[kh_smag_e.numElements()];
+  dawn::float_type* z_nabla2_e_for_atlas = new dawn::float_type[z_nabla2_e.numElements()];
 
   reshape_back(kh_smag_e.data(), kh_smag_e_for_atlas, kSize_, mesh_.NumEdges());
   reshape_back(z_nabla2_e.data(), z_nabla2_e_for_atlas, kSize_, mesh_.NumEdges());
 
-  memcpy((double*)kh_smag_e.data(), kh_smag_e_for_atlas, sizeof(double) * kh_smag_e.numElements());
-  memcpy((double*)z_nabla2_e.data(), z_nabla2_e_for_atlas,
-         sizeof(double) * z_nabla2_e.numElements());
+  memcpy((dawn::float_type*)kh_smag_e.data(), kh_smag_e_for_atlas,
+         sizeof(dawn::float_type) * kh_smag_e.numElements());
+  memcpy((dawn::float_type*)z_nabla2_e.data(), z_nabla2_e_for_atlas,
+         sizeof(dawn::float_type) * z_nabla2_e.numElements());
   delete[] kh_smag_e_for_atlas;
   delete[] z_nabla2_e_for_atlas;
 }

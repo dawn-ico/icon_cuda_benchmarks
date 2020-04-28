@@ -23,7 +23,6 @@
 #include <atlas/grid.h>
 #include <atlas/mesh.h>
 #include <atlas/mesh/actions/BuildEdges.h>
-// #include <atlas/mesh/actions/BuildEdges.h>
 #include <atlas/util/CoordinateEnums.h>
 
 // atlas interface for dawn generated code
@@ -40,14 +39,15 @@
 // io
 #include "io/atlasIO.h"
 
-std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
-                                                 const atlasInterface::Field<double>& ref,
-                                                 const atlasInterface::Field<double>& sol,
-                                                 int k_size);
+#include "driver-includes/defs.hpp"
 
-std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
-                                                 const atlasInterface::Field<double>& sol,
-                                                 int num_edges, int k_size);
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_type>& ref,
+              const atlasInterface::Field<dawn::float_type>& sol, int k_size);
+
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::float_type>& sol,
+              int num_edges, int k_size);
 
 int main(int argc, char const* argv[]) {
   // enable floating point exception
@@ -59,7 +59,7 @@ int main(int argc, char const* argv[]) {
   }
   int w = atoi(argv[1]);
   int k_size = 10;
-  double lDomain = M_PI;
+  dawn::float_type lDomain = M_PI;
 
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
   // like will certainly work too)
@@ -84,19 +84,33 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // helper lambdas to readily construct atlas fields and views on one line
   //===------------------------------------------------------------------------------------------===//
-  auto MakeAtlasField = [&](const std::string& name,
-                            int size) -> std::tuple<atlas::Field, atlasInterface::Field<double>> {
+  auto MakeAtlasField =
+      [&](const std::string& name,
+          int size) -> std::tuple<atlas::Field, atlasInterface::Field<dawn::float_type>> {
+#if DAWN_PRECISION == DAWN_SINGLE_PRECISION
+    atlas::Field field_F{name, atlas::array::DataType::real32(),
+                         atlas::array::make_shape(size, k_size)};
+#elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
     atlas::Field field_F{name, atlas::array::DataType::real64(),
                          atlas::array::make_shape(size, k_size)};
-    return {field_F, atlas::array::make_view<double, 2>(field_F)};
+#else
+#error DAWN_PRECISION is invalid
+#endif
+    return {field_F, atlas::array::make_view<dawn::float_type, 2>(field_F)};
   };
 
-  auto MakeAtlasSparseField =
-      [&](const std::string& name, int size,
-          int sparseSize) -> std::tuple<atlas::Field, atlasInterface::SparseDimension<double>> {
+  auto MakeAtlasSparseField = [&](const std::string& name, int size, int sparseSize)
+      -> std::tuple<atlas::Field, atlasInterface::SparseDimension<dawn::float_type>> {
+#if DAWN_PRECISION == DAWN_SINGLE_PRECISION
+    atlas::Field field_F{name, atlas::array::DataType::real32(),
+                         atlas::array::make_shape(size, k_size, sparseSize)};
+#elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
     atlas::Field field_F{name, atlas::array::DataType::real64(),
                          atlas::array::make_shape(size, k_size, sparseSize)};
-    return {field_F, atlas::array::make_view<double, 3>(field_F)};
+#else
+#error DAWN_PRECISION is invalid
+#endif
+    return {field_F, atlas::array::make_view<dawn::float_type, 3>(field_F)};
   };
 
   //===------------------------------------------------------------------------------------------===//
@@ -172,24 +186,30 @@ int main(int argc, char const* argv[]) {
   // input (spherical harmonics) and analytical solutions for div, curl and Laplacian
   //===------------------------------------------------------------------------------------------===//
 
-  auto sphericalHarmonic = [](double x, double y) -> std::tuple<double, double> {
-    double c1 = 0.25 * sqrt(105. / (2 * M_PI));
-    double c2 = 0.5 * sqrt(15. / (2 * M_PI));
+  auto sphericalHarmonic =
+      [](dawn::float_type x, dawn::float_type y) -> std::tuple<dawn::float_type, dawn::float_type> {
+    dawn::float_type c1 = 0.25 * sqrt(105. / (2 * M_PI));
+    dawn::float_type c2 = 0.5 * sqrt(15. / (2 * M_PI));
     return {c1 * cos(2 * x) * cos(y) * cos(y) * sin(y), c2 * cos(x) * cos(y) * sin(y)};
   };
-  auto analyticalLaplacian = [](double x, double y) -> std::tuple<double, double> {
-    double c1 = 0.25 * sqrt(105. / (2 * M_PI));
-    double c2 = 0.5 * sqrt(15. / (2 * M_PI));
+  auto analyticalLaplacian =
+      [](dawn::float_type x, dawn::float_type y) -> std::tuple<dawn::float_type, dawn::float_type> {
+    dawn::float_type c1 = 0.25 * sqrt(105. / (2 * M_PI));
+    dawn::float_type c2 = 0.5 * sqrt(15. / (2 * M_PI));
     return {-4 * c1 * cos(2 * x) * cos(y) * cos(y) * sin(y), -4 * c2 * cos(x) * sin(y) * cos(y)};
   };
-  auto analyticalScalarLaplacian = [](double x, double y) -> double {
-    double c1 = 0.25 * sqrt(105. / (2 * M_PI));
-    double c2 = 0.5 * sqrt(15. / (2 * M_PI));
+  auto analyticalScalarLaplacian = [](dawn::float_type x, dawn::float_type y) -> dawn::float_type {
+    dawn::float_type c1 = 0.25 * sqrt(105. / (2 * M_PI));
+    dawn::float_type c2 = 0.5 * sqrt(15. / (2 * M_PI));
     return sin(y) * (-1. / 2. * c1 * cos(2 * x) * (13 * cos(2 * y) + 9) - 5 * c2 * cos(x) * cos(y));
   };
 
-  auto wave = [](double x, double y) -> double { return sin(x) * sin(y); };
-  auto analyticalLaplacianWave = [](double x, double y) -> double { return -2 * sin(x) * sin(y); };
+  auto wave = [](dawn::float_type x, dawn::float_type y) -> dawn::float_type {
+    return sin(x) * sin(y);
+  };
+  auto analyticalLaplacianWave = [](dawn::float_type x, dawn::float_type y) -> dawn::float_type {
+    return -2 * sin(x) * sin(y);
+  };
 
   for(int level = 0; level < k_size; level++) {
     for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
@@ -224,7 +244,7 @@ int main(int argc, char const* argv[]) {
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
       inv_primal_edge_length(edgeIdx, level) = 1. / wrapper.edgeLength(mesh, edgeIdx);
-      double vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
+      dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
       inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
       tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
     }
@@ -275,13 +295,13 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
   //===------------------------------------------------------------------------------------------===//
-  dumpEdgeField("diamondLaplICONatlas_out0.txt", mesh, wrapper, nabla2, 0,
-                wrapper.innerEdges(mesh));
-  dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
-                wrapper.innerEdges(mesh));
+  // dumpEdgeField("diamondLaplICONatlas_out0.txt", mesh, wrapper, nabla2, 0,
+  //               wrapper.innerEdges(mesh));
+  // dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
+  //               wrapper.innerEdges(mesh));
 
-  dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
-                wrapper.innerEdges(mesh));
+  // dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
+  //               wrapper.innerEdges(mesh));
 
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
@@ -298,18 +318,18 @@ int main(int argc, char const* argv[]) {
   return 0;
 }
 
-std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
-                                                 const atlasInterface::Field<double>& sol,
-                                                 int num_edges, int k_size) {
-  double Linf = 0.;
-  double L1 = 0.;
-  double L2 = 0.;
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::float_type>& sol,
+              int num_edges, int k_size) {
+  dawn::float_type Linf = 0.;
+  dawn::float_type L1 = 0.;
+  dawn::float_type L2 = 0.;
   FILE* fp = fopen(refFname.c_str(), "r");
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < num_edges; edgeIdx++) {
       double in;
       fscanf(fp, "%lf ", &in);
-      double dif = sol(edgeIdx, level) - in;
+      dawn::float_type dif = sol(edgeIdx, level) - in;
       Linf = fmax(fabs(dif), Linf);
       L1 += fabs(dif);
       L2 += dif * dif;
@@ -322,16 +342,15 @@ std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
   return {Linf, L1, L2};
 }
 
-std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
-                                                 const atlasInterface::Field<double>& ref,
-                                                 const atlasInterface::Field<double>& sol,
-                                                 int k_size) {
-  double Linf = 0.;
-  double L1 = 0.;
-  double L2 = 0.;
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_type>& ref,
+              const atlasInterface::Field<dawn::float_type>& sol, int k_size) {
+  dawn::float_type Linf = 0.;
+  dawn::float_type L1 = 0.;
+  dawn::float_type L2 = 0.;
   for(int level = 0; level < k_size; level++) {
     for(int idx : indices) {
-      double dif = ref(idx, level) - sol(idx, level);
+      dawn::float_type dif = ref(idx, level) - sol(idx, level);
       Linf = fmax(fabs(dif), Linf);
       L1 += fabs(dif);
       L2 += dif * dif;

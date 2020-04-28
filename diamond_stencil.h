@@ -27,7 +27,6 @@
 
 class GpuTriMesh {
 private:
-  double2* pos_ = 0;
   int* ecvTable_ = 0;
 
   int numNodes_ = 0;
@@ -39,7 +38,6 @@ public:
   int NumEdges() const { return numEdges_; }
   int NumCells() const { return numCells_; }
 
-  double2* Pos() const { return pos_; };
   int* ECVTable() const { return ecvTable_; }
 
   GpuTriMesh(const atlas::Mesh& mesh);
@@ -50,7 +48,7 @@ public:
   struct sbase : public gridtools::dawn::timer_cuda {
     sbase(std::string name) : timer_cuda(name) {}
 
-    double get_time() { return total_time(); }
+    dawn::float_type get_time() { return total_time(); }
   };
 
   struct diamond_stencil : public sbase {
@@ -60,32 +58,32 @@ public:
     // fields
     // --------------------------
     // in dense
-    double* diff_multfac_smag_;
-    double* tangent_orientation_;
-    double* inv_primal_edge_length_;
-    double* inv_vert_vert_length_;
-    double* u_vert_;
-    double* v_vert_;
+    dawn::float_type* diff_multfac_smag_;
+    dawn::float_type* tangent_orientation_;
+    dawn::float_type* inv_primal_edge_length_;
+    dawn::float_type* inv_vert_vert_length_;
+    dawn::float_type* u_vert_;
+    dawn::float_type* v_vert_;
 
     // in sparse
-    double* primal_normal_vert_x_;
-    double* primal_normal_vert_y_;
-    double* dual_normal_vert_x_;
-    double* dual_normal_vert_y_;
+    dawn::float_type* primal_normal_vert_x_;
+    dawn::float_type* primal_normal_vert_y_;
+    dawn::float_type* dual_normal_vert_x_;
+    dawn::float_type* dual_normal_vert_y_;
 
     // input field on vertices and eges
-    double* vn_vert_;
-    double* vn_;
+    dawn::float_type* vn_vert_;
+    dawn::float_type* vn_;
 
     // tangential and normal coefficient for smagorinsky
-    double* dvt_tang_;
-    double* dvt_norm_;
+    dawn::float_type* dvt_tang_;
+    dawn::float_type* dvt_norm_;
 
     // out
-    double* kh_smag_1_;
-    double* kh_smag_2_;
-    double* kh_smag_e_;
-    double* z_nabla2_e_;
+    dawn::float_type* kh_smag_1_;
+    dawn::float_type* kh_smag_2_;
+    dawn::float_type* kh_smag_e_;
+    dawn::float_type* z_nabla2_e_;
 
     // --------------------------
     // number of levels per field
@@ -99,27 +97,27 @@ public:
 
   public:
     diamond_stencil(const atlas::Mesh& mesh, int k_size,
-                    const atlasInterface::Field<double>& diff_multfac_smag,
-                    const atlasInterface::Field<double>& tangent_orientation,
-                    const atlasInterface::Field<double>& inv_primal_edge_length,
-                    const atlasInterface::Field<double>& inv_vert_vert_length,
-                    const atlasInterface::Field<double>& u_vert,
-                    const atlasInterface::Field<double>& v_vert,
-                    const atlasInterface::SparseDimension<double>& primal_normal_vert_x,
-                    const atlasInterface::SparseDimension<double>& primal_normal_vert_y,
-                    const atlasInterface::SparseDimension<double>& dual_normal_vert_x,
-                    const atlasInterface::SparseDimension<double>& dual_normal_vert_y,
-                    const atlasInterface::SparseDimension<double>& vn_vert,
-                    const atlasInterface::Field<double>& vn,
-                    const atlasInterface::Field<double>& dvt_tang,
-                    const atlasInterface::Field<double>& dvt_norm,
-                    const atlasInterface::Field<double>& kh_smag_1,
-                    const atlasInterface::Field<double>& kh_smag_2,
-                    const atlasInterface::Field<double>& kh_smag_e,
-                    const atlasInterface::Field<double>& z_nabla2_e);
+                    const atlasInterface::Field<dawn::float_type>& diff_multfac_smag,
+                    const atlasInterface::Field<dawn::float_type>& tangent_orientation,
+                    const atlasInterface::Field<dawn::float_type>& inv_primal_edge_length,
+                    const atlasInterface::Field<dawn::float_type>& inv_vert_vert_length,
+                    const atlasInterface::Field<dawn::float_type>& u_vert,
+                    const atlasInterface::Field<dawn::float_type>& v_vert,
+                    const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_x,
+                    const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_y,
+                    const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_x,
+                    const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_y,
+                    const atlasInterface::SparseDimension<dawn::float_type>& vn_vert,
+                    const atlasInterface::Field<dawn::float_type>& vn,
+                    const atlasInterface::Field<dawn::float_type>& dvt_tang,
+                    const atlasInterface::Field<dawn::float_type>& dvt_norm,
+                    const atlasInterface::Field<dawn::float_type>& kh_smag_1,
+                    const atlasInterface::Field<dawn::float_type>& kh_smag_2,
+                    const atlasInterface::Field<dawn::float_type>& kh_smag_e,
+                    const atlasInterface::Field<dawn::float_type>& z_nabla2_e);
     void run();
 
-    void CopyResultToHost(atlasInterface::Field<double>& kh_smag_e,
-                          atlasInterface::Field<double>& z_nabla2_e) const;
+    void CopyResultToHost(atlasInterface::Field<dawn::float_type>& kh_smag_e,
+                          atlasInterface::Field<dawn::float_type>& z_nabla2_e) const;
   };
 };
