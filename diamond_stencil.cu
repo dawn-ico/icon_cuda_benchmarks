@@ -109,11 +109,13 @@ reduce_dvt(int numEdges, int numVertices, int kSize, const int* __restrict__ ecv
   }
 }
 
-__global__ void smagorinsky_12(int numEdges, int numVertices, int kSize,
-                               const int* __restrict__ ecvTable,
-                               dawn::float_type* __restrict__ kh_smag_1,
-                               dawn::float_type* __restrict__ kh_smag_2,
-                               const dawn::float_type* __restrict__ vn_vert) {
+__global__ void smagorinsky_12_and_diamond(
+    int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
+    dawn::float_type* __restrict__ kh_smag_1, dawn::float_type* __restrict__ kh_smag_2,
+    dawn::float_type* __restrict__ nabla2,
+    const dawn::float_type* __restrict__ inv_primal_edge_length,
+    const dawn::float_type* __restrict__ inv_vert_vert_length,
+    const dawn::float_type* __restrict__ vn_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -125,8 +127,18 @@ __global__ void smagorinsky_12(int numEdges, int numVertices, int kSize,
       const int edgesDenseKOffset = kIter * numEdges;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
+      const dawn::float_type __local_inv_primal =
+          __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]);
+      const dawn::float_type __local_inv_vert =
+          __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]);
+
+      const dawn::float_type weights_nabla[E_C_V_SIZE] = {
+          __local_inv_primal * __local_inv_primal, __local_inv_primal * __local_inv_primal,
+          __local_inv_vert * __local_inv_vert, __local_inv_vert * __local_inv_vert};
+
       dawn::float_type lhs_1 = 0.;
       dawn::float_type lhs_2 = 0.;
+      dawn::float_type lhs_nabla = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -136,9 +148,11 @@ __global__ void smagorinsky_12(int numEdges, int numVertices, int kSize,
         dawn::float_type __local_vn_vert = __ldg(&vn_vert[sparseIdx]);
         lhs_1 += __local_vn_vert * weights_1[nbhIter];
         lhs_2 += __local_vn_vert * weights_2[nbhIter];
+        lhs_nabla += 4. * __local_vn_vert * weights_nabla[nbhIter];
       }
       kh_smag_1[edgesDenseKOffset + pidx] = lhs_1;
-      kh_smag_1[edgesDenseKOffset + pidx] = lhs_2;
+      kh_smag_2[edgesDenseKOffset + pidx] = lhs_2;
+      nabla2[edgesDenseKOffset + pidx] = lhs_nabla;
     }
   }
 } // namespace
@@ -197,43 +211,6 @@ __global__ void smagorinsky(int numEdges, int kSize, dawn::float_type* __restric
     kh_smag[edgesDenseKOffset + pidx] =
         smag_fac[edgesDenseKOffset + pidx] *
         sqrt(kh_smag_1[edgesDenseKOffset + pidx] + kh_smag_2[edgesDenseKOffset + pidx]);
-  }
-}
-
-__global__ void diamond(int numEdges, int kSize, const int* __restrict__ ecvTable,
-                        dawn::float_type* __restrict__ nabla2,
-                        const dawn::float_type* __restrict__ vn_vert,
-                        const dawn::float_type* __restrict__ inv_primal_edge_length,
-                        const dawn::float_type* __restrict__ inv_vert_vert_length) {
-  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
-  if(pidx >= numEdges) {
-    return;
-  }
-  for(int kIter = 0; kIter < kSize; kIter++) {
-    const int edgesDenseKOffset = kIter * numEdges;
-    const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
-
-    const dawn::float_type weights[E_C_V_SIZE] = {
-        __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]),
-        __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]),
-        __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]),
-        __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx])};
-
-    dawn::float_type lhs = 0.;
-    for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-      int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
-      if(nbhIdx == DEVICE_MISSING_VALUE) {
-        continue;
-      }
-      // int sparseIdx = pidx * kSize * E_C_V_SIZE + kIter * E_C_V_SIZE + nbhIter;
-      int sparseIdx = ecvSparseKOffset + pidx * E_C_V_SIZE + nbhIter;
-      lhs += 4. * vn_vert[sparseIdx] * weights[nbhIter];
-    }
-    nabla2[edgesDenseKOffset + pidx] = lhs;
   }
 }
 
@@ -471,8 +448,9 @@ void DiamondStencil::diamond_stencil::run() {
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
-  smagorinsky_12<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                             kh_smag_1_, kh_smag_2_, vn_vert_);
+  smagorinsky_12_and_diamond<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_,
+                                         mesh_.ECVTable(), kh_smag_1_, kh_smag_2_, z_nabla2_e_,
+                                         inv_primal_edge_length_, inv_vert_vert_length_, vn_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
@@ -490,11 +468,6 @@ void DiamondStencil::diamond_stencil::run() {
 
   smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, diff_multfac_smag_, kh_smag_1_,
                           kh_smag_2_);
-  gpuErrchk(cudaPeekAtLastError());
-  gpuErrchk(cudaDeviceSynchronize());
-
-  diamond<<<dG, dB>>>(mesh_.NumEdges(), kSize_, mesh_.ECVTable(), z_nabla2_e_, vn_vert_,
-                      inv_primal_edge_length_, inv_vert_vert_length_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
