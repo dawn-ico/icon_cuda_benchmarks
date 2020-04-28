@@ -43,7 +43,11 @@
 std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
                                                  const atlasInterface::Field<double>& ref,
                                                  const atlasInterface::Field<double>& sol,
-                                                 int level);
+                                                 int k_size);
+
+std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
+                                                 const atlasInterface::Field<double>& sol,
+                                                 int num_edges, int k_size);
 
 int main(int argc, char const* argv[]) {
   // enable floating point exception
@@ -54,7 +58,7 @@ int main(int argc, char const* argv[]) {
     return -1;
   }
   int w = atoi(argv[1]);
-  int k_size = 20;
+  int k_size = 10;
   double lDomain = M_PI;
 
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
@@ -91,7 +95,7 @@ int main(int argc, char const* argv[]) {
       [&](const std::string& name, int size,
           int sparseSize) -> std::tuple<atlas::Field, atlasInterface::SparseDimension<double>> {
     atlas::Field field_F{name, atlas::array::DataType::real64(),
-                         atlas::array::make_shape(mesh.edges().size(), k_size, sparseSize)};
+                         atlas::array::make_shape(size, k_size, sparseSize)};
     return {field_F, atlas::array::make_view<double, 3>(field_F)};
   };
 
@@ -150,19 +154,19 @@ int main(int argc, char const* argv[]) {
   //  supposedly simply a copy of the edge normal in planar geometry (to be checked)
   //===------------------------------------------------------------------------------------------===//
   auto [primal_normal_x_F, primal_normal_x] =
-      MakeAtlasSparseField("primal_normal_x", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("primal_normal_x", mesh.edges().size(), verticesInDiamond);
   auto [primal_normal_y_F, primal_normal_y] =
-      MakeAtlasSparseField("primal_normal_y", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("primal_normal_y", mesh.edges().size(), verticesInDiamond);
   auto [dual_normal_x_F, dual_normal_x] =
-      MakeAtlasSparseField("dual_normal_x", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("dual_normal_x", mesh.edges().size(), verticesInDiamond);
   auto [dual_normal_y_F, dual_normal_y] =
-      MakeAtlasSparseField("dual_normal_y", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("dual_normal_y", mesh.edges().size(), verticesInDiamond);
 
   //===------------------------------------------------------------------------------------------===//
   // sparse dimension intermediary field for diamond
   //===------------------------------------------------------------------------------------------===//
   auto [vn_vert_F, vn_vert] =
-      MakeAtlasSparseField("vn_vert", mesh.nodes().size(), verticesInDiamond);
+      MakeAtlasSparseField("vn_vert", mesh.edges().size(), verticesInDiamond);
 
   //===------------------------------------------------------------------------------------------===//
   // input (spherical harmonics) and analytical solutions for div, curl and Laplacian
@@ -266,42 +270,74 @@ int main(int argc, char const* argv[]) {
   lapl.run();
   lapl.CopyResultToHost(kh_smag, nabla2);
 
-  std::cout << "run time Laplacian" << lapl.get_time() << "\n";
+  std::cout << "run time Laplacian: " << lapl.get_time() << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
   //===------------------------------------------------------------------------------------------===//
-  dumpEdgeField("diamondLaplICONatlas_out.txt", mesh, wrapper, nabla2, 40,
+  dumpEdgeField("diamondLaplICONatlas_out0.txt", mesh, wrapper, nabla2, 0,
                 wrapper.innerEdges(mesh));
-  dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, 40,
+  dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
+                wrapper.innerEdges(mesh));
+
+  dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
                 wrapper.innerEdges(mesh));
 
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
   {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, 40);
-    // printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-    printf("%e %e %e %e\n", 180. / w, Linf, L1, L2);
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  }
+  {
+    auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
+    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
 
   return 0;
 }
 
-std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
-                                                 const atlasInterface::Field<double>& ref,
+std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
                                                  const atlasInterface::Field<double>& sol,
-                                                 int level) {
+                                                 int num_edges, int k_size) {
   double Linf = 0.;
   double L1 = 0.;
   double L2 = 0.;
-  for(int idx : indices) {
-    double dif = ref(idx, level) - sol(idx, level);
-    Linf = fmax(fabs(dif), Linf);
-    L1 += fabs(dif);
-    L2 += dif * dif;
+  FILE* fp = fopen(refFname.c_str(), "r");
+  for(int level = 0; level < k_size; level++) {
+    for(int edgeIdx = 0; edgeIdx < num_edges; edgeIdx++) {
+      double in;
+      fscanf(fp, "%lf ", &in);
+      double dif = sol(edgeIdx, level) - in;
+      Linf = fmax(fabs(dif), Linf);
+      L1 += fabs(dif);
+      L2 += dif * dif;
+    }
+    fscanf(fp, "\n");
   }
-  L1 /= indices.size();
-  L2 = sqrt(L2) / sqrt(indices.size());
+  L1 /= (num_edges * k_size);
+  L2 = sqrt(L2) / sqrt(num_edges * k_size);
+  fclose(fp);
+  return {Linf, L1, L2};
+}
+
+std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
+                                                 const atlasInterface::Field<double>& ref,
+                                                 const atlasInterface::Field<double>& sol,
+                                                 int k_size) {
+  double Linf = 0.;
+  double L1 = 0.;
+  double L2 = 0.;
+  for(int level = 0; level < k_size; level++) {
+    for(int idx : indices) {
+      double dif = ref(idx, level) - sol(idx, level);
+      Linf = fmax(fabs(dif), Linf);
+      L1 += fabs(dif);
+      L2 += dif * dif;
+    }
+  }
+  L1 /= (indices.size() * k_size);
+  L2 = sqrt(L2) / sqrt(indices.size() * k_size);
   return {Linf, L1, L2};
 }
