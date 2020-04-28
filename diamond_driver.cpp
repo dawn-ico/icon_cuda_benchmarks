@@ -43,7 +43,11 @@
 std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
                                                  const atlasInterface::Field<double>& ref,
                                                  const atlasInterface::Field<double>& sol,
-                                                 int level);
+                                                 int k_size);
+
+std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
+                                                 const atlasInterface::Field<double>& sol,
+                                                 int num_edges, int k_size);
 
 int main(int argc, char const* argv[]) {
   // enable floating point exception
@@ -282,61 +286,58 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  for(int i = 0; i < k_size; i++) {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, i);
+  {
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
     printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
-
   {
-    double Linf = 0.;
-
-    FILE* fp = fopen("kh_smag_ref.txt", "r");
-    for(int i = 0; i < k_size; i++) {
-      double L1 = 0.;
-      double L2 = 0.;
-      double minRef = std::numeric_limits<double>::max();
-      double maxRef = -std::numeric_limits<double>::max();
-      double minGpu = std::numeric_limits<double>::max();
-      double maxGpu = -std::numeric_limits<double>::max();
-      for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-        double in;
-        fscanf(fp, "%lf ", &in);
-        double dif = kh_smag(edgeIdx, i) - in;
-        Linf = fmax(fabs(dif), Linf);
-        L1 += fabs(dif);
-        L2 += dif * dif;
-
-        minRef = fmin(minRef, in);
-        maxRef = fmax(maxRef, in);
-        minGpu = fmin(minGpu, kh_smag(edgeIdx, i));
-        maxGpu = fmax(maxGpu, kh_smag(edgeIdx, i));
-      }
-      L1 /= mesh.edges().size();
-      L2 = sqrt(L2) / sqrt(mesh.edges().size());
-      fscanf(fp, "\n");
-      printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-      printf("range ref [%f %f], range gpu [%f %f]\n", minRef, maxRef, minGpu, maxGpu);
-    }
-    fclose(fp);
+    auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
+    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
 
   return 0;
 }
 
-std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
-                                                 const atlasInterface::Field<double>& ref,
+std::tuple<double, double, double> MeasureErrors(const std::string& refFname,
                                                  const atlasInterface::Field<double>& sol,
-                                                 int level) {
+                                                 int num_edges, int k_size) {
   double Linf = 0.;
   double L1 = 0.;
   double L2 = 0.;
-  for(int idx : indices) {
-    double dif = ref(idx, level) - sol(idx, level);
-    Linf = fmax(fabs(dif), Linf);
-    L1 += fabs(dif);
-    L2 += dif * dif;
+  FILE* fp = fopen(refFname.c_str(), "r");
+  for(int level = 0; level < k_size; level++) {
+    for(int edgeIdx = 0; edgeIdx < num_edges; edgeIdx++) {
+      double in;
+      fscanf(fp, "%lf ", &in);
+      double dif = sol(edgeIdx, level) - in;
+      Linf = fmax(fabs(dif), Linf);
+      L1 += fabs(dif);
+      L2 += dif * dif;
+    }
+    fscanf(fp, "\n");
   }
-  L1 /= indices.size();
-  L2 = sqrt(L2) / sqrt(indices.size());
+  L1 /= (num_edges * k_size);
+  L2 = sqrt(L2) / sqrt(num_edges * k_size);
+  fclose(fp);
+  return {Linf, L1, L2};
+}
+
+std::tuple<double, double, double> MeasureErrors(std::vector<int> indices,
+                                                 const atlasInterface::Field<double>& ref,
+                                                 const atlasInterface::Field<double>& sol,
+                                                 int k_size) {
+  double Linf = 0.;
+  double L1 = 0.;
+  double L2 = 0.;
+  for(int level = 0; level < k_size; level++) {
+    for(int idx : indices) {
+      double dif = ref(idx, level) - sol(idx, level);
+      Linf = fmax(fabs(dif), Linf);
+      L1 += fabs(dif);
+      L2 += dif * dif;
+    }
+  }
+  L1 /= (indices.size() * k_size);
+  L2 = sqrt(L2) / sqrt(indices.size() * k_size);
   return {Linf, L1, L2};
 }

@@ -257,7 +257,7 @@ __global__ void smagorinsky_2_multitply_facs(int numEdges, int kSize,
 
     kh_smag_2[edgesDenseKOffset + pidx] =
         kh_smag_2[edgesDenseKOffset + pidx] *
-            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) -
+            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) +
         __ldg(&dvt_tang[edgesDenseKOffset + pidx]) *
             __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]);
   }
