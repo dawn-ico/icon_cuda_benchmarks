@@ -156,44 +156,32 @@ __global__ void smagorinsky_12_and_diamond(
     }
   }
 } // namespace
-
 __global__ void
-smagorinsky_1_multitply_facs(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_1,
-                             const dawn::float_type* __restrict__ tangent_orientation,
-                             const dawn::float_type* __restrict__ inv_vert_vert_length,
-                             const dawn::float_type* __restrict__ inv_primal_edge_length,
-                             const dawn::float_type* __restrict__ dvt_norm) {
+smagorinsky_12_multiply_factors(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_1,
+                                dawn::float_type* __restrict__ kh_smag_2,
+                                const dawn::float_type* __restrict__ tangent_orientation,
+                                const dawn::float_type* __restrict__ inv_vert_vert_length,
+                                const dawn::float_type* __restrict__ inv_primal_edge_length,
+                                const dawn::float_type* __restrict__ dvt_norm,
+                                const dawn::float_type* __restrict__ dvt_tang) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
   for(int kIter = 0; kIter < kSize; kIter++) {
     const int edgesDenseKOffset = kIter * numEdges;
-    dawn::float_type rhs = kh_smag_1[edgesDenseKOffset + pidx] *
-                               __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
-                               __ldg(&tangent_orientation[edgesDenseKOffset + pidx]) +
-                           __ldg(&dvt_norm[edgesDenseKOffset + pidx]) *
-                               __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]);
-    kh_smag_1[edgesDenseKOffset + pidx] = rhs * rhs;
-  }
-}
+    const int denseIdx = edgesDenseKOffset + pidx;
 
-__global__ void
-smagorinsky_2_multitply_facs(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_2,
-                             const dawn::float_type* __restrict__ inv_vert_vert_length,
-                             const dawn::float_type* __restrict__ inv_primal_edge_length,
-                             const dawn::float_type* __restrict__ dvt_tang) {
-  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
-  if(pidx >= numEdges) {
-    return;
-  }
-  for(int kIter = 0; kIter < kSize; kIter++) {
-    const int edgesDenseKOffset = kIter * numEdges;
-    dawn::float_type rhs = kh_smag_2[edgesDenseKOffset + pidx] *
-                               __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) +
-                           __ldg(&dvt_tang[edgesDenseKOffset + pidx]) *
-                               __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]);
-    kh_smag_2[edgesDenseKOffset + pidx] = rhs * rhs;
+    const dawn::float_type rhs_smag_1 =
+        kh_smag_1[denseIdx] * __ldg(&inv_primal_edge_length[denseIdx]) *
+            __ldg(&tangent_orientation[denseIdx]) +
+        __ldg(&dvt_norm[denseIdx]) * __ldg(&inv_vert_vert_length[denseIdx]);
+    kh_smag_1[denseIdx] = rhs_smag_1 * rhs_smag_1;
+
+    const dawn::float_type rhs_smag_2 =
+        kh_smag_2[denseIdx] * __ldg(&inv_vert_vert_length[denseIdx]) +
+        __ldg(&dvt_tang[denseIdx]) * __ldg(&inv_primal_edge_length[denseIdx]);
+    kh_smag_2[denseIdx] = rhs_smag_2 * rhs_smag_2;
   }
 }
 
@@ -454,15 +442,9 @@ void DiamondStencil::diamond_stencil::run() {
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
-  smagorinsky_1_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_,
-                                           tangent_orientation_, inv_vert_vert_length_,
-                                           inv_primal_edge_length_, dvt_norm_);
-  gpuErrchk(cudaPeekAtLastError());
-  gpuErrchk(cudaDeviceSynchronize());
-
-  smagorinsky_2_multitply_facs<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_2_,
-                                           inv_vert_vert_length_, inv_primal_edge_length_,
-                                           dvt_tang_);
+  smagorinsky_12_multiply_factors<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_, kh_smag_2_,
+                                              tangent_orientation_, inv_vert_vert_length_,
+                                              inv_primal_edge_length_, dvt_norm_, dvt_tang_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
