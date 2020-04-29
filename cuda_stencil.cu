@@ -39,7 +39,7 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 #define EDGES_PER_CELL 3
 #define CELLS_PER_EDGE 2
 #define NODES_PER_EDGE 2
-#define BLOCK_SIZE 128
+#define BLOCK_SIZE 64
 #define DEVICE_MISSING_VALUE -1
 __global__ void computeRot(const int* __restrict__ nodeToEdge, const double* __restrict__ vecE,
                            const double* __restrict__ geofacRot, int numNodes, double* rotVec) {
