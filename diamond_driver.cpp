@@ -58,7 +58,7 @@ int main(int argc, char const* argv[]) {
     return -1;
   }
   int w = atoi(argv[1]);
-  int k_size = 128;
+  int k_size = 80;
   dawn::float_type lDomain = M_PI;
 
   time_t tic = clock();
@@ -341,13 +341,30 @@ int main(int argc, char const* argv[]) {
       vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
 
   const int nruns = 100;
+  std::vector<dawn::float_type> times(nruns);
   for(int i = 0; i < nruns; i++) {
     lapl.run();
+    times[i] = lapl.get_time();
+    lapl.reset();
   }
   lapl.CopyResultToHost(kh_smag, nabla2);
-
-  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << lapl.get_time() / nruns
-            << "\n";
+  auto mean = [](const std::vector<dawn::float_type>& times) {
+    dawn::float_type avg = 0.;
+    for(auto time : times) {
+      avg += time;
+    }
+    return avg / times.size();
+  };
+  auto standrd_deviation = [&](const std::vector<dawn::float_type>& times) {
+    auto avg = mean(times);
+    dawn::float_type sd = 0.;
+    for(auto time : times) {
+      sd += (time - avg) * (time - avg);
+    }
+    return sqrt(1. / (times.size() - 1) * sd);
+  };
+  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
+            << " with standard deviation of: " << standrd_deviation(times) << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
