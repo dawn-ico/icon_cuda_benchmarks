@@ -356,7 +356,7 @@ int main(int argc, char const* argv[]) {
     }
     return avg / times.size();
   };
-  auto standrd_deviation = [&](const std::vector<dawn::float_type>& times) {
+  auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
     auto avg = mean(times);
     dawn::float_type sd = 0.;
     for(auto time : times) {
@@ -366,7 +366,7 @@ int main(int argc, char const* argv[]) {
   };
 
   std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
-            << " with standard deviation of: " << standrd_deviation(times) << "\n";
+            << " with standard deviation of: " << standard_deviation(times) << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
@@ -386,7 +386,8 @@ int main(int argc, char const* argv[]) {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
     printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
-  {
+
+  if(w == 340) {
     auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
     printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
