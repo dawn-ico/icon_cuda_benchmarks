@@ -64,15 +64,15 @@ public:
     dawn::float_type* inv_vert_vert_length_;
     // dawn::float_type* u_vert_;
     // dawn::float_type* v_vert_;
-    float2* uv_;
+    dawn::float_2_type* uv_;
 
     // in sparse
     // dawn::float_type* primal_normal_vert_x_;
     // dawn::float_type* primal_normal_vert_y_;
     // dawn::float_type* dual_normal_vert_x_;
     // dawn::float_type* dual_normal_vert_y_;
-    float2* primal_normal_vert_;
-    float2* dual_normal_vert_;
+    dawn::float_2_type* primal_normal_vert_;
+    dawn::float_2_type* dual_normal_vert_;
 
     // input field on vertices and eges
     dawn::float_type* vn_vert_;

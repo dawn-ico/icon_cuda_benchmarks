@@ -49,8 +49,9 @@ __global__ void smagorinsky_12_and_diamond_vn_vert_otf(
     dawn::float_type* __restrict__ kh_smag_1, dawn::float_type* __restrict__ kh_smag_2,
     dawn::float_type* __restrict__ nabla2,
     const dawn::float_type* __restrict__ inv_primal_edge_length,
-    const dawn::float_type* __restrict__ inv_vert_vert_length, const float2* __restrict__ uv,
-    const float2* __restrict__ primal_normal_vert) {
+    const dawn::float_type* __restrict__ inv_vert_vert_length,
+    const dawn::float_2_type* __restrict__ uv,
+    const dawn::float_2_type* __restrict__ primal_normal_vert) {
   unsigned int eidx = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned int kidx = blockIdx.y * blockDim.y + threadIdx.y;
   int klo = kidx * LEVELS_PER_THREAD;
@@ -87,8 +88,8 @@ __global__ void smagorinsky_12_and_diamond_vn_vert_otf(
         continue;
       }
       const int sparseIdx = ecvSparseKOffset + eidx * E_C_V_SIZE + nbhIter;
-      float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-      float2 nrm_i = __ldg(&primal_normal_vert[sparseIdx]);
+      dawn::float_2_type uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
+      dawn::float_2_type nrm_i = __ldg(&primal_normal_vert[sparseIdx]);
 
       dawn::float_type __local_vn_vert = uv_i.x * nrm_i.x + uv_i.y * nrm_i.y;
       ;
@@ -109,8 +110,9 @@ __global__ void smagorinsky_12_multiply_factors_and_nabla_tang_norm_otf(
     dawn::float_type* __restrict__ kh_smag_1, dawn::float_type* __restrict__ kh_smag_2,
     const dawn::float_type* __restrict__ tangent_orientation,
     const dawn::float_type* __restrict__ inv_vert_vert_length,
-    const dawn::float_type* __restrict__ inv_primal_edge_length, const float2* __restrict__ uv,
-    const float2* __restrict__ dual_normal_vert, dawn::float_type* __restrict__ nabla2,
+    const dawn::float_type* __restrict__ inv_primal_edge_length,
+    const dawn::float_2_type* __restrict__ uv,
+    const dawn::float_2_type* __restrict__ dual_normal_vert, dawn::float_type* __restrict__ nabla2,
     dawn::float_type* __restrict__ vn) {
   unsigned int eidx = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned int kidx = blockIdx.y * blockDim.y + threadIdx.y;
@@ -139,8 +141,9 @@ __global__ void smagorinsky_12_multiply_factors_and_nabla_tang_norm_otf(
       if(nbhIdx == DEVICE_MISSING_VALUE) {
         continue;
       }
-      float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-      float2 nrm_i = __ldg(&dual_normal_vert[ecvSparseKOffset + eidx * E_C_V_SIZE + nbhIter]);
+      dawn::float_2_type uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
+      dawn::float_2_type nrm_i =
+          __ldg(&dual_normal_vert[ecvSparseKOffset + eidx * E_C_V_SIZE + nbhIter]);
 
       dawn::float_type rhs = (uv_i.x * nrm_i.x + uv_i.y * nrm_i.y);
       lhs_tang += weights_tang[nbhIter] * rhs;
@@ -292,21 +295,27 @@ void initField(const atlasInterface::Field<dawn::float_type>& field, dawn::float
   delete[] reshaped;
 }
 void initField(const atlasInterface::Field<dawn::float_type>& field_x,
-               const atlasInterface::Field<dawn::float_type>& field_y, float2** cudaStorage,
-               int denseSize, int kSize) {
+               const atlasInterface::Field<dawn::float_type>& field_y,
+               dawn::float_2_type** cudaStorage, int denseSize, int kSize) {
   assert(field_x.numElements() == field_y.numElements());
   dawn::float_type* reshaped_x = new dawn::float_type[field_x.numElements()];
   dawn::float_type* reshaped_y = new dawn::float_type[field_y.numElements()];
   reshape(field_x.data(), reshaped_x, kSize, denseSize);
   reshape(field_y.data(), reshaped_y, kSize, denseSize);
 
-  float2* packed = new float2[field_x.numElements()];
+  dawn::float_2_type* packed = new dawn::float_2_type[field_x.numElements()];
   for(int i = 0; i < kSize * denseSize; i++) {
+#if DAWN_PRECISION == DAWN_SINGLE_PRECISION
     packed[i] = make_float2(reshaped_x[i], reshaped_y[i]);
+#elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
+    packed[i] = make_double2(reshaped_x[i], reshaped_y[i]);
+#else
+#error DAWN_PRECISION is invalid
+#endif
   }
 
-  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(float2) * field_x.numElements()));
-  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(float2) * field_x.numElements(),
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(dawn::float_2_type) * field_x.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(dawn::float_2_type) * field_x.numElements(),
                        cudaMemcpyHostToDevice));
   delete[] reshaped_x;
   delete[] reshaped_y;
@@ -314,20 +323,26 @@ void initField(const atlasInterface::Field<dawn::float_type>& field_x,
 }
 void initSparseField(const atlasInterface::SparseDimension<dawn::float_type>& field_x,
                      const atlasInterface::SparseDimension<dawn::float_type>& field_y,
-                     float2** cudaStorage, int denseSize, int sparseSize, int kSize) {
+                     dawn::float_2_type** cudaStorage, int denseSize, int sparseSize, int kSize) {
   assert(field_x.numElements() == field_y.numElements());
   dawn::float_type* reshaped_x = new dawn::float_type[field_x.numElements()];
   dawn::float_type* reshaped_y = new dawn::float_type[field_y.numElements()];
   reshape(field_x.data(), reshaped_x, kSize, denseSize, sparseSize);
   reshape(field_y.data(), reshaped_y, kSize, denseSize, sparseSize);
 
-  float2* packed = new float2[field_x.numElements()];
+  dawn::float_2_type* packed = new dawn::float_2_type[field_x.numElements()];
   for(int i = 0; i < field_x.numElements(); i++) {
+#if DAWN_PRECISION == DAWN_SINGLE_PRECISION
     packed[i] = make_float2(reshaped_x[i], reshaped_y[i]);
+#elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
+    packed[i] = make_double2(reshaped_x[i], reshaped_y[i]);
+#else
+#error DAWN_PRECISION is invalid
+#endif
   }
 
-  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(float2) * field_x.numElements()));
-  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(float2) * field_x.numElements(),
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(dawn::float_2_type) * field_x.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(dawn::float_2_type) * field_x.numElements(),
                        cudaMemcpyHostToDevice));
   delete[] reshaped_x;
   delete[] reshaped_y;
