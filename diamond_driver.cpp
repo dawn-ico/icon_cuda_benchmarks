@@ -348,23 +348,6 @@ int main(int argc, char const* argv[]) {
     lapl.reset();
   }
   lapl.CopyResultToHost(kh_smag, nabla2);
-  auto mean = [](const std::vector<dawn::float_type>& times) {
-    dawn::float_type avg = 0.;
-    for(auto time : times) {
-      avg += time;
-    }
-    return avg / times.size();
-  };
-  auto standrd_deviation = [&](const std::vector<dawn::float_type>& times) {
-    auto avg = mean(times);
-    dawn::float_type sd = 0.;
-    for(auto time : times) {
-      sd += (time - avg) * (time - avg);
-    }
-    return sqrt(1. / (times.size() - 1) * sd);
-  };
-  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
-            << " with standard deviation of: " << standrd_deviation(times) << "\n";
 
   auto mean = [](const std::vector<dawn::float_type>& times) {
     dawn::float_type avg = 0.;
