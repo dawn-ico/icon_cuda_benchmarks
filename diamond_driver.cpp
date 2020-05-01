@@ -32,12 +32,12 @@
 #include "diamond_stencil.h"
 
 // atlas utilities
-#include "../utils/AtlasCartesianWrapper.h"
-#include "../utils/AtlasFromNetcdf.h"
-#include "../utils/GenerateRectAtlasMesh.h"
+#include "atlas_utils/utils/AtlasCartesianWrapper.h"
+#include "atlas_utils/utils/AtlasFromNetcdf.h"
+#include "atlas_utils/utils/GenerateRectAtlasMesh.h"
 
 // io
-#include "io/atlasIO.h"
+#include "atlas_utils/stencils/io/atlasIO.h"
 
 #include "driver-includes/defs.hpp"
 
