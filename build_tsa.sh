@@ -3,12 +3,10 @@
 module load gcc/8.3.0
 module load cuda/10.1.243
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/project/c14/install/daint/atlas_install
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/project/c14/install/daint/eckit_install
+atlasDir=/scratch/mroeth/tsa/spack/spack-install/tsa/atlas/develop/gcc/2bgfzwgc7pxmx32wojgdthepqli7gng7/
+eckitDir=/scratch/mroeth/tsa/spack/spack-install/tsa/eckit/master/gcc/kcvtp4xpjy7fbk7oz73o45a55jyd2xgv/
+atlasUtilsDir=/scratch/mroeth/tsa/spack/spack-install/tsa/atlas_utilities/master/gcc/lrtmaiwn7mhdhkyxpc7pqbieur2kaxtb
 
-atlasDir=/scratch/cosuna/tsa/spack/spack-install/tsa/atlas/develop/gcc/2bgfzwgc7pxmx32wojgdthepqli7gng7/
-eckitDir=/scratch/cosuna/tsa/spack/spack-install/tsa/eckit/master/gcc/kcvtp4xpjy7fbk7oz73o45a55jyd2xgv/
-atlasUtilsDir=/scratch/cosuna/tsa/spack/spack-install/tsa/atlas_utilities/master/gcc/lrtmaiwn7mhdhkyxpc7pqbieur2kaxtb
 atlasInc=${atlasDir}/include
 eckitInc=${eckitDir}/include
 
