@@ -44,10 +44,8 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 
 __global__ void compute_vn(int numEdges, int numVertices, int kSize,
                            const int* __restrict__ ecvTable, dawn::float_type* __restrict__ vn_vert,
-                           const dawn::float_type* __restrict__ u_vert,
-                           const dawn::float_type* __restrict__ v_vert,
-                           const dawn::float_type* __restrict__ primal_normal_vert_x,
-                           const dawn::float_type* __restrict__ primal_normal_vert_y) {
+                           const float2* __restrict__ uv,
+                           const float2* __restrict__ primal_normal_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -62,13 +60,11 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
+        float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
+        float2 nrm_i = __ldg(&primal_normal_vert[verticesDenseKOffset + nbhIdx]);
 
         int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
-
-        vn_vert[sparseIdx] =
-            __ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                __ldg(&primal_normal_vert_x[sparseIdx]) +
-            __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) * __ldg(&primal_normal_vert_y[sparseIdx]);
+        vn_vert[sparseIdx] = uv_i.x * nrm_i.x + uv_i.y * nrm_i.y;
       }
     }
   }
@@ -77,10 +73,8 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
 __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
                                 const int* __restrict__ ecvTable,
                                 dawn::float_type* __restrict__ dvt_tang,
-                                const dawn::float_type* __restrict__ u_vert,
-                                const dawn::float_type* __restrict__ v_vert,
-                                const dawn::float_type* __restrict__ dual_normal_vert_x,
-                                const dawn::float_type* __restrict__ dual_normal_vert_y) {
+                                const float2* __restrict__ uv,
+                                const float2* __restrict__ dual_normal_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -98,11 +92,10 @@ __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += weights[nbhIter] *
-               (__ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                    __ldg(&dual_normal_vert_x[ecvSparseKOffset + nbhIter * numEdges + pidx]) +
-                __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
-                    __ldg(&dual_normal_vert_y[ecvSparseKOffset + nbhIter * numEdges + pidx]));
+        float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
+        float2 nrm_i = __ldg(&dual_normal_vert[ecvSparseKOffset + nbhIter * numEdges + pidx]);
+
+        lhs += weights[nbhIter] * (uv_i.x * nrm_i.x + uv_i.y * nrm_i.y);
       }
       dvt_tang[edgesDenseKOffset + pidx] = lhs;
     }
@@ -126,10 +119,8 @@ __global__ void finish_dvt_tang(int numEdges, int kSize, dawn::float_type* __res
 __global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
                                 const int* __restrict__ ecvTable,
                                 dawn::float_type* __restrict__ dvt_norm,
-                                const dawn::float_type* __restrict__ u_vert,
-                                const dawn::float_type* __restrict__ v_vert,
-                                const dawn::float_type* __restrict__ dual_normal_vert_x,
-                                const dawn::float_type* __restrict__ dual_normal_vert_y) {
+                                const float2* __restrict__ uv_vert,
+                                const float2* __restrict__ dual_normal_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -147,11 +138,11 @@ __global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
-        lhs += weights[nbhIter] *
-               (__ldg(&u_vert[verticesDenseKOffset + nbhIdx]) *
-                    __ldg(&dual_normal_vert_x[ecvSparseKOffset + nbhIter * numEdges + pidx]) +
-                __ldg(&v_vert[verticesDenseKOffset + nbhIdx]) *
-                    __ldg(&dual_normal_vert_y[ecvSparseKOffset + nbhIter * numEdges + pidx]));
+        float2 __local_uv_vert = __ldg(&uv_vert[verticesDenseKOffset + nbhIdx]);
+        float2 __local_dual_normal_vert =
+            __ldg(&dual_normal_vert[ecvSparseKOffset + nbhIter * numEdges + pidx]);
+        lhs += weights[nbhIter] * (__local_uv_vert.x * __local_dual_normal_vert.x +
+                                   __local_uv_vert.y * __local_dual_normal_vert.y);
       }
       dvt_norm[edgesDenseKOffset + pidx] = lhs;
     }
@@ -457,6 +448,48 @@ void initField(const atlasInterface::Field<dawn::float_type>& field, dawn::float
                        cudaMemcpyHostToDevice));
   delete[] reshaped;
 }
+void initField(const atlasInterface::Field<dawn::float_type>& field_x,
+               const atlasInterface::Field<dawn::float_type>& field_y, float2** cudaStorage,
+               int denseSize, int kSize) {
+  assert(field_x.numElements() == field_y.numElements());
+  dawn::float_type* reshaped_x = new dawn::float_type[field_x.numElements()];
+  dawn::float_type* reshaped_y = new dawn::float_type[field_y.numElements()];
+  reshape(field_x.data(), reshaped_x, kSize, denseSize);
+  reshape(field_y.data(), reshaped_y, kSize, denseSize);
+
+  float2* packed = new float2[field_x.numElements()];
+  for(int i = 0; i < kSize * denseSize; i++) {
+    packed[i] = make_float2(reshaped_x[i], reshaped_y[i]);
+  }
+
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(float2) * field_x.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(float2) * field_x.numElements(),
+                       cudaMemcpyHostToDevice));
+  delete[] reshaped_x;
+  delete[] reshaped_y;
+  delete[] packed;
+}
+void initSparseField(const atlasInterface::SparseDimension<dawn::float_type>& field_x,
+                     const atlasInterface::SparseDimension<dawn::float_type>& field_y,
+                     float2** cudaStorage, int denseSize, int sparseSize, int kSize) {
+  assert(field_x.numElements() == field_y.numElements());
+  dawn::float_type* reshaped_x = new dawn::float_type[field_x.numElements()];
+  dawn::float_type* reshaped_y = new dawn::float_type[field_y.numElements()];
+  reshape(field_x.data(), reshaped_x, kSize, denseSize, sparseSize);
+  reshape(field_y.data(), reshaped_y, kSize, denseSize, sparseSize);
+
+  float2* packed = new float2[field_x.numElements()];
+  for(int i = 0; i < field_x.numElements(); i++) {
+    packed[i] = make_float2(reshaped_x[i], reshaped_y[i]);
+  }
+
+  gpuErrchk(cudaMalloc((void**)cudaStorage, sizeof(float2) * field_x.numElements()));
+  gpuErrchk(cudaMemcpy(*cudaStorage, packed, sizeof(float2) * field_x.numElements(),
+                       cudaMemcpyHostToDevice));
+  delete[] reshaped_x;
+  delete[] reshaped_y;
+  delete[] packed;
+}
 void initSparseField(const atlasInterface::SparseDimension<dawn::float_type>& field,
                      dawn::float_type** cudaStorage, int denseSize, int sparseSize, int kSize) {
   dawn::float_type* reshaped = new dawn::float_type[field.numElements()];
@@ -492,17 +525,12 @@ DiamondStencil::diamond_stencil::diamond_stencil(
   initField(tangent_orientation, &tangent_orientation_, mesh.edges().size(), k_size);
   initField(inv_primal_edge_length, &inv_primal_edge_length_, mesh.edges().size(), k_size);
   initField(inv_vert_vert_length, &inv_vert_vert_length_, mesh.edges().size(), k_size);
-  initField(u_vert, &u_vert_, mesh.nodes().size(), k_size);
-  initField(v_vert, &v_vert_, mesh.nodes().size(), k_size);
+  initField(u_vert, v_vert, &uv_, mesh.nodes().size(), k_size);
 
-  initSparseField(primal_normal_vert_x, &primal_normal_vert_x_, mesh.edges().size(), E_C_V_SIZE,
-                  k_size);
-  initSparseField(primal_normal_vert_y, &primal_normal_vert_y_, mesh.edges().size(), E_C_V_SIZE,
-                  k_size);
-  initSparseField(dual_normal_vert_x, &dual_normal_vert_x_, mesh.edges().size(), E_C_V_SIZE,
-                  k_size);
-  initSparseField(dual_normal_vert_y, &dual_normal_vert_y_, mesh.edges().size(), E_C_V_SIZE,
-                  k_size);
+  initSparseField(primal_normal_vert_x, primal_normal_vert_y, &primal_normal_vert_,
+                  mesh.edges().size(), E_C_V_SIZE, k_size);
+  initSparseField(dual_normal_vert_x, dual_normal_vert_y, &dual_normal_vert_, mesh.edges().size(),
+                  E_C_V_SIZE, k_size);
   initSparseField(vn_vert, &vn_vert_, mesh.edges().size(), E_C_V_SIZE, k_size);
 
   initField(vn, &vn_, mesh.edges().size(), k_size);
@@ -523,13 +551,12 @@ void DiamondStencil::diamond_stencil::run() {
   start();
 
   compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), vn_vert_,
-                         u_vert_, v_vert_, primal_normal_vert_x_, primal_normal_vert_y_);
+                         uv_, primal_normal_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
   reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              dvt_tang_, u_vert_, v_vert_, dual_normal_vert_x_,
-                              dual_normal_vert_y_);
+                              dvt_tang_, uv_, dual_normal_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
@@ -538,8 +565,7 @@ void DiamondStencil::diamond_stencil::run() {
   gpuErrchk(cudaDeviceSynchronize());
 
   reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              dvt_norm_, u_vert_, v_vert_, dual_normal_vert_x_,
-                              dual_normal_vert_y_);
+                              dvt_norm_, uv_, dual_normal_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
