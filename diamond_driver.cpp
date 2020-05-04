@@ -71,7 +71,7 @@ int main(int argc, char const* argv[]) {
 
   atlas::Mesh mesh;
   time_t meshgen_tic = clock();
-  mesh = AtlasMeshRect(w);
+  mesh = AtlasMeshSquare(w);
   atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
   atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
   atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
@@ -89,7 +89,8 @@ int main(int argc, char const* argv[]) {
   const int edgesPerCell = 3;
   const int verticesInDiamond = 4;
 
-  // dumpMesh4Triplot(mesh, "atlas", wrapper);
+  dumpMesh4Triplot(mesh, "atlas", wrapper);
+  return 0;
 
   //===------------------------------------------------------------------------------------------===//
   // helper lambdas to readily construct atlas fields and views on one line
@@ -239,30 +240,30 @@ int main(int argc, char const* argv[]) {
     primal_normal_cache[edgeIdx] = wrapper.primalNormal(mesh, edgeIdx);
   }
 
-  for(int level = 0; level < k_size; level++) {
-    for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-      auto [x, y] = wrapper.nodeLocation(nodeIdx);
-      auto [ui, vi] = sphericalHarmonic(x, y);
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    auto [x, y] = wrapper.nodeLocation(nodeIdx);
+    auto [ui, vi] = sphericalHarmonic(x, y);
+    for(int level = 0; level < k_size; level++) {
       u(nodeIdx, level) = ui;
       v(nodeIdx, level) = vi;
     }
   }
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [nx, ny] = primal_normal_cache[edgeIdx];
-      auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-      auto [ui, vi] = sphericalHarmonic(x, y);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    auto [nx, ny] = primal_normal_cache[edgeIdx];
+    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto [ui, vi] = sphericalHarmonic(x, y);
+    for(int level = 0; level < k_size; level++) {
       // vn(edgeIdx, level) = ui * nx + vi * ny;
       vn(edgeIdx, level) = ui * 1. + vi * 1.;
     }
   }
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-      auto [ui, vi] = analyticalLaplacian(x, y);
-      auto [nx, ny] = primal_normal_cache[edgeIdx];
-      ;
-      nabla2_sol(edgeIdx, level) = analyticalScalarLaplacian(x, y);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto [ui, vi] = analyticalLaplacian(x, y);
+    auto [nx, ny] = primal_normal_cache[edgeIdx];
+    double analytical = analyticalScalarLaplacian(x, y);
+    for(int level = 0; level < k_size; level++) {
+      nabla2_sol(edgeIdx, level) = analytical;
       // nabla2_sol(edgeIdx, level) = ui * nx + vi * ny;
     }
   }
@@ -279,13 +280,15 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // initialize geometrical info on edges
   //===------------------------------------------------------------------------------------------===//
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      inv_primal_edge_length(edgeIdx, level) = 1. / wrapper.edgeLength(mesh, edgeIdx);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    double edgeLength = wrapper.edgeLength(mesh, edgeIdx);
+    double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
+    dawn::float_type vert_vert_length = sqrt(3.) * edgeLength;
+    for(int level = 0; level < k_size; level++) {
+      inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
       // dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
-      dawn::float_type vert_vert_length = sqrt(3.) * wrapper.edgeLength(mesh, edgeIdx);
       inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
-      tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
+      tangent_orientation(edgeIdx, level) = tangentOrientation;
     }
   }
 
