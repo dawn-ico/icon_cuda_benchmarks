@@ -60,10 +60,10 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
+        const int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
         float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-        float2 nrm_i = __ldg(&primal_normal_vert[verticesDenseKOffset + nbhIdx]);
+        float2 nrm_i = __ldg(&primal_normal_vert[sparseIdx]);
 
-        int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
         vn_vert[sparseIdx] = uv_i.x * nrm_i.x + uv_i.y * nrm_i.y;
       }
     }
