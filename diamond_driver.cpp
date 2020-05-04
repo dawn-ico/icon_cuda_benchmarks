@@ -89,8 +89,7 @@ int main(int argc, char const* argv[]) {
   const int edgesPerCell = 3;
   const int verticesInDiamond = 4;
 
-  dumpMesh4Triplot(mesh, "atlas", wrapper);
-  return 0;
+  // dumpMesh4Triplot(mesh, "atlas", wrapper);
 
   //===------------------------------------------------------------------------------------------===//
   // helper lambdas to readily construct atlas fields and views on one line
