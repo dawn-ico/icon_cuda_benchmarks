@@ -342,6 +342,12 @@ int main(int argc, char const* argv[]) {
       inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
       vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
 
+  const int warmup_runs = 100;
+  for(int i = 0; i < warmup_runs; i++) {
+    lapl.run();
+    lapl.reset();
+  }
+
   const int nruns = 100;
   std::vector<dawn::float_type> times(nruns);
   for(int i = 0; i < nruns; i++) {
