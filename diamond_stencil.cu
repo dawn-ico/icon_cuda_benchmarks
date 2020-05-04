@@ -155,14 +155,14 @@ __global__ void smagorinsky_12_and_diamond(
     }
   }
 } // namespace
-__global__ void
-smagorinsky_12_multiply_factors(int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_1,
-                                dawn::float_type* __restrict__ kh_smag_2,
-                                const dawn::float_type* __restrict__ tangent_orientation,
-                                const dawn::float_type* __restrict__ inv_vert_vert_length,
-                                const dawn::float_type* __restrict__ inv_primal_edge_length,
-                                const dawn::float_type* __restrict__ dvt_norm,
-                                const dawn::float_type* __restrict__ dvt_tang) {
+__global__ void smagorinsky_12_multiply_factors_and_nabla(
+    int numEdges, int kSize, dawn::float_type* __restrict__ kh_smag_1,
+    dawn::float_type* __restrict__ kh_smag_2,
+    const dawn::float_type* __restrict__ tangent_orientation,
+    const dawn::float_type* __restrict__ inv_vert_vert_length,
+    const dawn::float_type* __restrict__ inv_primal_edge_length,
+    const dawn::float_type* __restrict__ dvt_norm, const dawn::float_type* __restrict__ dvt_tang,
+    dawn::float_type* __restrict__ nabla2, dawn::float_type* __restrict__ vn) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -171,16 +171,25 @@ smagorinsky_12_multiply_factors(int numEdges, int kSize, dawn::float_type* __res
     const int edgesDenseKOffset = kIter * numEdges;
     const int denseIdx = edgesDenseKOffset + pidx;
 
-    const dawn::float_type rhs_smag_1 =
-        kh_smag_1[denseIdx] * __ldg(&inv_primal_edge_length[denseIdx]) *
-            __ldg(&tangent_orientation[denseIdx]) +
-        __ldg(&dvt_norm[denseIdx]) * __ldg(&inv_vert_vert_length[denseIdx]);
+    const dawn::float_type __local_inv_primal_edge_length =
+        __ldg(&inv_primal_edge_length[denseIdx]);
+    const dawn::float_type __local_inv_vert_vert_length = __ldg(&inv_vert_vert_length[denseIdx]);
+
+    const dawn::float_type rhs_smag_1 = kh_smag_1[denseIdx] * __local_inv_primal_edge_length *
+                                            __ldg(&tangent_orientation[denseIdx]) +
+                                        __ldg(&dvt_norm[denseIdx]) * __local_inv_vert_vert_length;
     kh_smag_1[denseIdx] = rhs_smag_1 * rhs_smag_1;
 
-    const dawn::float_type rhs_smag_2 =
-        kh_smag_2[denseIdx] * __ldg(&inv_vert_vert_length[denseIdx]) +
-        __ldg(&dvt_tang[denseIdx]) * __ldg(&inv_primal_edge_length[denseIdx]);
+    const dawn::float_type rhs_smag_2 = kh_smag_2[denseIdx] * __local_inv_vert_vert_length +
+                                        __ldg(&dvt_tang[denseIdx]) * __local_inv_primal_edge_length;
     kh_smag_2[denseIdx] = rhs_smag_2 * rhs_smag_2;
+
+    const dawn::float_type __local_vn = __ldg(&vn[denseIdx]);
+
+    nabla2[denseIdx] =
+        nabla2[denseIdx] -
+        8. * __local_vn * __local_inv_primal_edge_length * __local_inv_primal_edge_length -
+        8. * __local_vn * __local_inv_vert_vert_length * __local_inv_vert_vert_length;
   }
 }
 
@@ -198,28 +207,6 @@ __global__ void smagorinsky(int numEdges, int kSize, dawn::float_type* __restric
     kh_smag[edgesDenseKOffset + pidx] =
         smag_fac[edgesDenseKOffset + pidx] *
         sqrt(kh_smag_1[edgesDenseKOffset + pidx] + kh_smag_2[edgesDenseKOffset + pidx]);
-  }
-}
-
-__global__ void nabla2(int numEdges, int kSize, dawn::float_type* __restrict__ nabla2,
-                       dawn::float_type* __restrict__ vn,
-                       const dawn::float_type* __restrict__ inv_primal_edge_length,
-                       const dawn::float_type* __restrict__ inv_vert_vert_length) {
-  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
-  if(pidx >= numEdges) {
-    return;
-  }
-  for(int kIter = 0; kIter < kSize; kIter++) {
-    const int edgesDenseKOffset = kIter * numEdges;
-
-    nabla2[edgesDenseKOffset + pidx] =
-        nabla2[edgesDenseKOffset + pidx] -
-        8. * __ldg(&vn[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_primal_edge_length[edgesDenseKOffset + pidx]) -
-        8. * __ldg(&vn[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]) *
-            __ldg(&inv_vert_vert_length[edgesDenseKOffset + pidx]);
   }
 }
 
@@ -441,19 +428,14 @@ void DiamondStencil::diamond_stencil::run() {
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
-  smagorinsky_12_multiply_factors<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_1_, kh_smag_2_,
-                                              tangent_orientation_, inv_vert_vert_length_,
-                                              inv_primal_edge_length_, dvt_norm_, dvt_tang_);
+  smagorinsky_12_multiply_factors_and_nabla<<<dG, dB>>>(
+      mesh_.NumEdges(), kSize_, kh_smag_1_, kh_smag_2_, tangent_orientation_, inv_vert_vert_length_,
+      inv_primal_edge_length_, dvt_norm_, dvt_tang_, z_nabla2_e_, vn_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
   smagorinsky<<<dG, dB>>>(mesh_.NumEdges(), kSize_, kh_smag_e_, diff_multfac_smag_, kh_smag_1_,
                           kh_smag_2_);
-  gpuErrchk(cudaPeekAtLastError());
-  gpuErrchk(cudaDeviceSynchronize());
-
-  nabla2<<<dG, dB>>>(mesh_.NumEdges(), kSize_, z_nabla2_e_, vn_, inv_primal_edge_length_,
-                     inv_vert_vert_length_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
