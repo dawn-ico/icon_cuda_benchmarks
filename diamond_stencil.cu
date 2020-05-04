@@ -70,23 +70,26 @@ __global__ void compute_vn(int numEdges, int numVertices, int kSize,
   }
 }
 
-__global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
-                                const int* __restrict__ ecvTable,
-                                dawn::float_type* __restrict__ dvt_tang,
-                                const float2* __restrict__ uv,
-                                const float2* __restrict__ dual_normal_vert) {
+__global__ void reduce_dvt(int numEdges, int numVertices, int kSize,
+                           const int* __restrict__ ecvTable,
+                           dawn::float_type* __restrict__ dvt_tang,
+                           dawn::float_type* __restrict__ dvt_norm, const float2* __restrict__ uv,
+                           const float2* __restrict__ dual_normal_vert) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
   }
-  const dawn::float_type weights[E_C_V_SIZE] = {-1., 1., 0., 0.};
+  const dawn::float_type weights_tang[E_C_V_SIZE] = {-1., 1., 0., 0.};
+  const dawn::float_type weights_norm[E_C_V_SIZE] = {0., 0., -1., 1.};
+
   {
     for(int kIter = 0; kIter < kSize; kIter++) {
       const int edgesDenseKOffset = kIter * numEdges;
       const int verticesDenseKOffset = kIter * numVertices;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
 
-      dawn::float_type lhs = 0.;
+      dawn::float_type lhs_tang = 0.;
+      dawn::float_type lhs_norm = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
         int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
         if(nbhIdx == DEVICE_MISSING_VALUE) {
@@ -95,9 +98,12 @@ __global__ void reduce_dvt_tang(int numEdges, int numVertices, int kSize,
         float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
         float2 nrm_i = __ldg(&dual_normal_vert[ecvSparseKOffset + nbhIter * numEdges + pidx]);
 
-        lhs += weights[nbhIter] * (uv_i.x * nrm_i.x + uv_i.y * nrm_i.y);
+        dawn::float_type rhs = (uv_i.x * nrm_i.x + uv_i.y * nrm_i.y);
+        lhs_tang += weights_tang[nbhIter] * rhs;
+        lhs_norm += weights_norm[nbhIter] * rhs;
       }
-      dvt_tang[edgesDenseKOffset + pidx] = lhs;
+      dvt_tang[edgesDenseKOffset + pidx] = lhs_tang;
+      dvt_norm[edgesDenseKOffset + pidx] = lhs_norm;
     }
   }
 }
@@ -113,39 +119,6 @@ __global__ void finish_dvt_tang(int numEdges, int kSize, dawn::float_type* __res
 
     dvt_tang[edgesDenseKOffset + pidx] =
         dvt_tang[edgesDenseKOffset + pidx] * __ldg(&tangent_orientation[edgesDenseKOffset + pidx]);
-  }
-}
-
-__global__ void reduce_dvt_norm(int numEdges, int numVertices, int kSize,
-                                const int* __restrict__ ecvTable,
-                                dawn::float_type* __restrict__ dvt_norm,
-                                const float2* __restrict__ uv_vert,
-                                const float2* __restrict__ dual_normal_vert) {
-  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
-  if(pidx >= numEdges) {
-    return;
-  }
-  const dawn::float_type weights[E_C_V_SIZE] = {0., 0., -1., 1.};
-  {
-    for(int kIter = 0; kIter < kSize; kIter++) {
-      const int edgesDenseKOffset = kIter * numEdges;
-      const int verticesDenseKOffset = kIter * numVertices;
-      const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
-
-      dawn::float_type lhs = 0.;
-      for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-        int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
-        if(nbhIdx == DEVICE_MISSING_VALUE) {
-          continue;
-        }
-        float2 __local_uv_vert = __ldg(&uv_vert[verticesDenseKOffset + nbhIdx]);
-        float2 __local_dual_normal_vert =
-            __ldg(&dual_normal_vert[ecvSparseKOffset + nbhIter * numEdges + pidx]);
-        lhs += weights[nbhIter] * (__local_uv_vert.x * __local_dual_normal_vert.x +
-                                   __local_uv_vert.y * __local_dual_normal_vert.y);
-      }
-      dvt_norm[edgesDenseKOffset + pidx] = lhs;
-    }
   }
 }
 
@@ -555,17 +528,12 @@ void DiamondStencil::diamond_stencil::run() {
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
-  reduce_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              dvt_tang_, uv_, dual_normal_vert_);
+  reduce_dvt<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), dvt_tang_,
+                         dvt_norm_, uv_, dual_normal_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
   finish_dvt_tang<<<dG, dB>>>(mesh_.NumEdges(), kSize_, dvt_tang_, tangent_orientation_);
-  gpuErrchk(cudaPeekAtLastError());
-  gpuErrchk(cudaDeviceSynchronize());
-
-  reduce_dvt_norm<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(),
-                              dvt_norm_, uv_, dual_normal_vert_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
