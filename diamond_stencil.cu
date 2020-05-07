@@ -43,44 +43,16 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 #define BLOCK_SIZE 128
 #define DEVICE_MISSING_VALUE -1
 
-__global__ void compute_vn(int numEdges, int numVertices, int kSize,
-                           const int* __restrict__ ecvTable, dawn::float_type* __restrict__ vn_vert,
-                           const float2* __restrict__ uv,
-                           const float2* __restrict__ primal_normal_vert) {
-  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
-  if(pidx >= numEdges) {
-    return;
-  }
-  {
-    for(int kIter = 0; kIter < kSize; kIter++) {
-      const int verticesDenseKOffset = kIter * numVertices;
-      const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
-
-      for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-        int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
-        if(nbhIdx == DEVICE_MISSING_VALUE) {
-          continue;
-        }
-        const int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
-        float2 uv_i = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-        float2 nrm_i = __ldg(&primal_normal_vert[sparseIdx]);
-
-        vn_vert[sparseIdx] = uv_i.x * nrm_i.x + uv_i.y * nrm_i.y;
-      }
-    }
-  }
-}
-
-__global__ void
-reduce_dvt_and_smagorinsky_12_and_diamond_and_smagorinsky_12_multiply_factors_and_nabla_and_smagorinsky(
-    int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
-    dawn::float_type* __restrict__ nabla2,
-    const dawn::float_type* __restrict__ inv_primal_edge_length,
-    const dawn::float_type* __restrict__ inv_vert_vert_length,
-    const dawn::float_type* __restrict__ vn_vert, const dawn::float_type* tangent_orientation,
-    const float2* __restrict__ uv, const float2* __restrict__ dual_normal_vert,
-    const dawn::float_type* __restrict__ vn, const dawn::float_type* __restrict__ smag_fac,
-    dawn::float_type* __restrict__ kh_smag) {
+__global__ void merged(int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
+                       dawn::float_type* __restrict__ nabla2,
+                       const dawn::float_type* __restrict__ inv_primal_edge_length,
+                       const dawn::float_type* __restrict__ inv_vert_vert_length,
+                       const dawn::float_type* tangent_orientation, const float2* __restrict__ uv,
+                       const float2* __restrict__ primal_normal_vert,
+                       const float2* __restrict__ dual_normal_vert,
+                       const dawn::float_type* __restrict__ vn,
+                       const dawn::float_type* __restrict__ smag_fac,
+                       dawn::float_type* __restrict__ kh_smag) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
   if(pidx >= numEdges) {
     return;
@@ -115,11 +87,13 @@ reduce_dvt_and_smagorinsky_12_and_diamond_and_smagorinsky_12_multiply_factors_an
         }
         const int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
         float2 __local_uv = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-        float2 __local_dual_normal_vert = __ldg(&dual_normal_vert[sparseIdx]);
-        dawn::float_type __local_vn_vert = __ldg(&vn_vert[sparseIdx]);
+        float2 __local_primal_normal_vert = __ldg(&primal_normal_vert[sparseIdx]);
+        dawn::float_type __local_vn_vert = __local_uv.x * __local_primal_normal_vert.x +
+                                           __local_uv.y * __local_primal_normal_vert.y;
         lhs_1 += __local_vn_vert * weights_1[nbhIter];
         lhs_2 += __local_vn_vert * weights_2[nbhIter];
         lhs_nabla += 4. * __local_vn_vert * weights_nabla[nbhIter];
+        float2 __local_dual_normal_vert = __ldg(&dual_normal_vert[sparseIdx]);
         dawn::float_type tang_norm_rhs =
             (__local_uv.x * __local_dual_normal_vert.x + __local_uv.y * __local_dual_normal_vert.y);
         lhs_tang += weights_tang[nbhIter] * tang_norm_rhs;
@@ -347,15 +321,9 @@ void DiamondStencil::diamond_stencil::run() {
   // starting timers
   start();
 
-  compute_vn<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), vn_vert_,
-                         uv_, primal_normal_vert_);
-  gpuErrchk(cudaPeekAtLastError());
-  gpuErrchk(cudaDeviceSynchronize());
-
-  reduce_dvt_and_smagorinsky_12_and_diamond_and_smagorinsky_12_multiply_factors_and_nabla_and_smagorinsky<<<
-      dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), z_nabla2_e_,
-                inv_primal_edge_length_, inv_vert_vert_length_, vn_vert_, tangent_orientation_, uv_,
-                dual_normal_vert_, vn_, diff_multfac_smag_, kh_smag_e_);
+  merged<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), z_nabla2_e_,
+                     inv_primal_edge_length_, inv_vert_vert_length_, tangent_orientation_, uv_,
+                     primal_normal_vert_, dual_normal_vert_, vn_, diff_multfac_smag_, kh_smag_e_);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
