@@ -33,11 +33,10 @@
 
 // atlas utilities
 #include "atlas_utils/utils/AtlasCartesianWrapper.h"
-#include "atlas_utils/utils/AtlasFromNetcdf.h"
 #include "atlas_utils/utils/GenerateRectAtlasMesh.h"
 
 // io
-#include "atlas_utils/stencils/io/atlasIO.h"
+// #include "atlas_utils/stencils/io/atlasIO.h"
 
 #include "driver-includes/defs.hpp"
 
@@ -52,6 +51,10 @@ MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::flo
 int main(int argc, char const* argv[]) {
   // enable floating point exception
   // feenableexcept(FE_INVALID | FE_OVERFLOW);
+
+  // using atlasDenseContainer = std::tuple<atlas::Field, atlasInterface::Field<dawn::float_type>>;
+  // using atlasSparseContainer =
+  //     std::tuple<atlas::Field, atlasInterface::SparseDimension<dawn::float_type>>;
 
   if(argc != 2) {
     std::cout << "intended use is\n" << argv[0] << " ny" << std::endl;
@@ -130,69 +133,64 @@ int main(int argc, char const* argv[]) {
   //  in the ICON stencil the velocity is reconstructed at vertices (from edges)
   //  for this test, we simply assign an analytical function
   //===------------------------------------------------------------------------------------------===//
-  auto [u_F, u] = MakeAtlasField("u", mesh.nodes().size());
-  auto [v_F, v] = MakeAtlasField("v", mesh.nodes().size());
+  auto u = MakeAtlasField("u", mesh.nodes().size());
+  auto v = MakeAtlasField("v", mesh.nodes().size());
 
   //===------------------------------------------------------------------------------------------===//
   // input field (field we want to take the laplacian of)
   //  normal velocity on edges
   //===------------------------------------------------------------------------------------------===//
-  auto [vn_F, vn] = MakeAtlasField("vn", mesh.edges().size());
+  auto vn = MakeAtlasField("vn", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // output fields (kh_smag(1|2) are "helper" fields to store intermediary results)
   //===------------------------------------------------------------------------------------------===//
-  auto [nabla2_F, nabla2] = MakeAtlasField("nabla2", mesh.edges().size());
-  auto [kh_smag_1_F, kh_smag_1] = MakeAtlasField("kh_smag_1", mesh.edges().size());
-  auto [kh_smag_2_F, kh_smag_2] = MakeAtlasField("kh_smag_2", mesh.edges().size());
-  auto [kh_smag_F, kh_smag] = MakeAtlasField("kh_smag", mesh.edges().size());
+  auto nabla2 = MakeAtlasField("nabla2", mesh.edges().size());
+  auto kh_smag_1 = MakeAtlasField("kh_smag_1", mesh.edges().size());
+  auto kh_smag_2 = MakeAtlasField("kh_smag_2", mesh.edges().size());
+  auto kh_smag = MakeAtlasField("kh_smag", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // control field
   //===------------------------------------------------------------------------------------------===//
-  auto [nabla2_sol_F, nabla2_sol] = MakeAtlasField("nabla2", mesh.edges().size());
+  auto nabla2_sol = MakeAtlasField("nabla2", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // geometrical quantities on edges (vert_vert_lenght is distance between far vertices of diamond)
   //===------------------------------------------------------------------------------------------===//
-  auto [inv_primal_edge_length_F, inv_primal_edge_length] =
-      MakeAtlasField("inv_primal_edge_length", mesh.edges().size());
-  auto [inv_vert_vert_length_F, inv_vert_vert_length] =
-      MakeAtlasField("inv_vert_vert_length", mesh.edges().size());
-  auto [tangent_orientation_F, tangent_orientation] =
-      MakeAtlasField("tangent_orientation", mesh.edges().size());
+  auto inv_primal_edge_length = MakeAtlasField("inv_primal_edge_length", mesh.edges().size());
+  auto inv_vert_vert_length = MakeAtlasField("inv_vert_vert_length", mesh.edges().size());
+  auto tangent_orientation = MakeAtlasField("tangent_orientation", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // smagorinsky coefficient stored on edges (=1 for us, simply there to force the same number of
   // reads in both ICON and our version)
   //===------------------------------------------------------------------------------------------===//
-  auto [diff_multfac_smag_F, diff_multfac_smag] =
-      MakeAtlasField("diff_multfac_smag", mesh.edges().size());
+  auto diff_multfac_smag = MakeAtlasField("diff_multfac_smag", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // tangential and normal components for smagorinsky diffusion
   //===------------------------------------------------------------------------------------------===//
-  auto [dvt_norm_F, dvt_norm] = MakeAtlasField("dvt_norm", mesh.edges().size());
-  auto [dvt_tang_F, dvt_tang] = MakeAtlasField("dvt_tang", mesh.edges().size());
+  auto dvt_norm = MakeAtlasField("dvt_norm", mesh.edges().size());
+  auto dvt_tang = MakeAtlasField("dvt_tang", mesh.edges().size());
 
   //===------------------------------------------------------------------------------------------===//
   // primal and dual normals at vertices (!)
   //  supposedly simply a copy of the edge normal in planar geometry (to be checked)
   //===------------------------------------------------------------------------------------------===//
-  auto [primal_normal_x_F, primal_normal_x] =
+  auto primal_normal_x =
       MakeAtlasSparseField("primal_normal_x", mesh.edges().size(), verticesInDiamond);
-  auto [primal_normal_y_F, primal_normal_y] =
+  auto primal_normal_y =
       MakeAtlasSparseField("primal_normal_y", mesh.edges().size(), verticesInDiamond);
-  auto [dual_normal_x_F, dual_normal_x] =
+  auto dual_normal_x =
       MakeAtlasSparseField("dual_normal_x", mesh.edges().size(), verticesInDiamond);
-  auto [dual_normal_y_F, dual_normal_y] =
+  auto dual_normal_y =
       MakeAtlasSparseField("dual_normal_y", mesh.edges().size(), verticesInDiamond);
 
   //===------------------------------------------------------------------------------------------===//
   // sparse dimension intermediary field for diamond
   //===------------------------------------------------------------------------------------------===//
-  auto [vn_vert_F, vn_vert] =
-      MakeAtlasSparseField("vn_vert", mesh.edges().size(), verticesInDiamond);
+  auto vn_vert = MakeAtlasSparseField("vn_vert", mesh.edges().size(), verticesInDiamond);
 
   time_t alloc_toc = clock();
 
@@ -240,29 +238,29 @@ int main(int argc, char const* argv[]) {
   }
 
   for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-    auto [x, y] = wrapper.nodeLocation(nodeIdx);
-    auto [ui, vi] = sphericalHarmonic(x, y);
+    auto xy = wrapper.nodeLocation(nodeIdx);
+    auto uv = sphericalHarmonic(std::get<0>(xy), std::get<1>(xy));
     for(int level = 0; level < k_size; level++) {
-      u(nodeIdx, level) = ui;
-      v(nodeIdx, level) = vi;
+      std::get<1>(u)(nodeIdx, level) = std::get<0>(uv);
+      std::get<1>(v)(nodeIdx, level) = std::get<1>(uv);
     }
   }
   for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-    auto [nx, ny] = primal_normal_cache[edgeIdx];
-    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-    auto [ui, vi] = sphericalHarmonic(x, y);
+    auto n = primal_normal_cache[edgeIdx];
+    auto xy = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto uv = sphericalHarmonic(std::get<0>(xy), std::get<1>(xy));
     for(int level = 0; level < k_size; level++) {
       // vn(edgeIdx, level) = ui * nx + vi * ny;
-      vn(edgeIdx, level) = ui * 1. + vi * 1.;
+      std::get<1>(vn)(edgeIdx, level) = std::get<0>(uv) * 1. + std::get<1>(uv) * 1.;
     }
   }
   for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-    auto [ui, vi] = analyticalLaplacian(x, y);
-    auto [nx, ny] = primal_normal_cache[edgeIdx];
-    double analytical = analyticalScalarLaplacian(x, y);
+    auto xy = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto uv = analyticalLaplacian(std::get<0>(xy), std::get<1>(xy));
+    auto n = primal_normal_cache[edgeIdx];
+    double analytical = analyticalScalarLaplacian(std::get<0>(xy), std::get<1>(xy));
     for(int level = 0; level < k_size; level++) {
-      nabla2_sol(edgeIdx, level) = analytical;
+      std::get<1>(nabla2_sol)(edgeIdx, level) = analytical;
       // nabla2_sol(edgeIdx, level) = ui * nx + vi * ny;
     }
   }
@@ -284,10 +282,11 @@ int main(int argc, char const* argv[]) {
     double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
     dawn::float_type vert_vert_length = sqrt(3.) * edgeLength;
     for(int level = 0; level < k_size; level++) {
-      inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
+      std::get<1>(inv_primal_edge_length)(edgeIdx, level) = 1. / edgeLength;
       // dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
-      inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
-      tangent_orientation(edgeIdx, level) = tangentOrientation;
+      std::get<1>(inv_vert_vert_length)(edgeIdx, level) =
+          (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
+      std::get<1>(tangent_orientation)(edgeIdx, level) = tangentOrientation;
     }
   }
 
@@ -303,13 +302,13 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [nx, ny] = primal_normal_cache[edgeIdx];
+      auto n = primal_normal_cache[edgeIdx];
 
       for(int nbhIdx = 0; nbhIdx < verticesInDiamond; nbhIdx++) {
-        primal_normal_x(edgeIdx, nbhIdx, level) = 1.;
-        primal_normal_y(edgeIdx, nbhIdx, level) = 1.;
-        dual_normal_x(edgeIdx, nbhIdx, level) = 1.;
-        dual_normal_y(edgeIdx, nbhIdx, level) = 1.;
+        std::get<1>(primal_normal_x)(edgeIdx, nbhIdx, level) = 1.;
+        std::get<1>(primal_normal_y)(edgeIdx, nbhIdx, level) = 1.;
+        std::get<1>(dual_normal_x)(edgeIdx, nbhIdx, level) = 1.;
+        std::get<1>(dual_normal_y)(edgeIdx, nbhIdx, level) = 1.;
 
         // primal_normal_x(edgeIdx, nbhIdx, level) = nx;
         // primal_normal_y(edgeIdx, nbhIdx, level) = ny;
@@ -324,7 +323,7 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   for(int level = 0; level < k_size; level++) {
     for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      diff_multfac_smag(edgeIdx, level) = 1.;
+      std::get<1>(diff_multfac_smag)(edgeIdx, level) = 1.;
     }
   }
 
@@ -337,38 +336,38 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // stencil call
   //===------------------------------------------------------------------------------------------===/
-  DiamondStencil::diamond_stencil lapl(
-      mesh, k_size, diff_multfac_smag, tangent_orientation, inv_primal_edge_length,
-      inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
-      vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
+  // DiamondStencil::diamond_stencil lapl(
+  //     mesh, k_size, diff_multfac_smag, tangent_orientation, inv_primal_edge_length,
+  //     inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
+  //     vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
 
-  const int nruns = 100;
-  std::vector<dawn::float_type> times(nruns);
-  for(int i = 0; i < nruns; i++) {
-    lapl.run();
-    times[i] = lapl.get_time();
-    lapl.reset();
-  }
-  lapl.CopyResultToHost(kh_smag, nabla2);
+  // const int nruns = 100;
+  // std::vector<dawn::float_type> times(nruns);
+  // for(int i = 0; i < nruns; i++) {
+  //   lapl.run();
+  //   times[i] = lapl.get_time();
+  //   lapl.reset();
+  // }
+  // lapl.CopyResultToHost(std::get<1>(kh_smag), std::get<1>(nabla2));
 
-  auto mean = [](const std::vector<dawn::float_type>& times) {
-    dawn::float_type avg = 0.;
-    for(auto time : times) {
-      avg += time;
-    }
-    return avg / times.size();
-  };
-  auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
-    auto avg = mean(times);
-    dawn::float_type sd = 0.;
-    for(auto time : times) {
-      sd += (time - avg) * (time - avg);
-    }
-    return sqrt(1. / (times.size() - 1) * sd);
-  };
+  // auto mean = [](const std::vector<dawn::float_type>& times) {
+  //   dawn::float_type avg = 0.;
+  //   for(auto time : times) {
+  //     avg += time;
+  //   }
+  //   return avg / times.size();
+  // };
+  // auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
+  //   auto avg = mean(times);
+  //   dawn::float_type sd = 0.;
+  //   for(auto time : times) {
+  //     sd += (time - avg) * (time - avg);
+  //   }
+  //   return sqrt(1. / (times.size() - 1) * sd);
+  // };
 
-  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
-            << " with standard deviation of: " << standard_deviation(times) << "\n";
+  // std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
+  //           << " with standard deviation of: " << standard_deviation(times) << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
@@ -384,15 +383,17 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
-    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-  }
+  // {
+  //   auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), std::get<1>(nabla2_sol),
+  //                                       std::get<1>(nabla2), std::get<1>(k_size));
+  //   printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  // }
 
-  if(w == 340) {
-    auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
-    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-  }
+  // if(w == 340) {
+  //   auto [Linf, L1, L2] =
+  //       MeasureErrors("kh_smag_ref.txt", std::get<1>(kh_smag), mesh.edges().size(), k_size);
+  //   printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+  // }
 
   return 0;
 }
