@@ -42,6 +42,7 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 #define E_C_V_SIZE 4
 #define BLOCK_SIZE 128
 #define DEVICE_MISSING_VALUE -1
+#define LEVELS_PER_THREAD 10
 
 __global__ void merged(int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
                        dawn::float_type* __restrict__ nabla2,
@@ -54,6 +55,9 @@ __global__ void merged(int numEdges, int numVertices, int kSize, const int* __re
                        const dawn::float_type* __restrict__ smag_fac,
                        dawn::float_type* __restrict__ kh_smag) {
   unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned int kidx = blockIdx.y * blockDim.y + threadIdx.y;
+  int klo = kidx * LEVELS_PER_THREAD;
+  int khi = (kidx + 1) * LEVELS_PER_THREAD;
   if(pidx >= numEdges) {
     return;
   }
@@ -62,7 +66,10 @@ __global__ void merged(int numEdges, int numVertices, int kSize, const int* __re
   const dawn::float_type weights_tang[E_C_V_SIZE] = {-1., 1., 0., 0.};
   const dawn::float_type weights_norm[E_C_V_SIZE] = {0., 0., -1., 1.};
   {
-    for(int kIter = 0; kIter < kSize; kIter++) {
+    for(int kIter = klo; kIter < khi; kIter++) {
+      if(kIter >= kSize) {
+        return;
+      }
       const int edgesDenseKOffset = kIter * numEdges;
       const int verticesDenseKOffset = kIter * numVertices;
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
@@ -314,9 +321,9 @@ DiamondStencil::diamond_stencil::diamond_stencil(
 }
 
 void DiamondStencil::diamond_stencil::run() {
-  // stage over edges
-  dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
-  dim3 dB(BLOCK_SIZE);
+  int dK = (kSize_ + LEVELS_PER_THREAD - 1) / LEVELS_PER_THREAD;
+  dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE, (dK + BLOCK_SIZE - 1) / BLOCK_SIZE, 1);
+  dim3 dB(BLOCK_SIZE, BLOCK_SIZE, 1);
 
   // starting timers
   start();
