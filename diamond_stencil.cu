@@ -40,9 +40,9 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 }
 
 #define E_C_V_SIZE 4
-#define BLOCK_SIZE 16
+#define BLOCK_SIZE 32
 #define DEVICE_MISSING_VALUE -1
-#define LEVELS_PER_THREAD 10
+#define LEVELS_PER_THREAD 1
 
 __global__ void merged(int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
                        dawn::float_type* __restrict__ nabla2,
