@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <cuda_runtime.h>
+
 /**
  * @name Storage defintions
  * @ingroup dawn
@@ -77,8 +79,10 @@ namespace dawn {
  */
 #if DAWN_PRECISION == DAWN_SINGLE_PRECISION
 using float_type = float;
+using float_2_type = float2;
 #elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
 using float_type = double;
+using float_2_type = double2;
 #else
 #error DAWN_PRECISION is invalid
 #endif

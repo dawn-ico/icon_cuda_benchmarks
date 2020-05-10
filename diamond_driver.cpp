@@ -90,7 +90,7 @@ int main(int argc, char const* argv[]) {
   int w = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
   bool debug = cmdOptionExists(argv, argv + argc, "-d") ? true : false;
 
-  int k_size = 128;
+  int k_size = 80;
   dawn::float_type lDomain = M_PI;
 
   time_t tic = clock();
@@ -98,7 +98,7 @@ int main(int argc, char const* argv[]) {
   // dump a whole bunch of debug output (meant to be visualized using Octave, but gnuplot and the
   // like will certainly work too)
   const bool dbg_out = false;
-  const bool verbose = false;
+  const bool verbose = true;
   const bool readMeshFromDisk = false;
 
   time_t meshgen_tic = clock();
@@ -107,7 +107,7 @@ int main(int argc, char const* argv[]) {
   if(strLayout) {
     mesh = AtlasStrIndxMesh(w);
   } else {
-    mesh = AtlasMeshRect(w);
+    mesh = AtlasMeshSquare(w);
   }
   if(debug) {
     atlas::output::Gmsh gmsh("mesh.msh");
@@ -278,30 +278,30 @@ int main(int argc, char const* argv[]) {
     primal_normal_cache[edgeIdx] = wrapper.primalNormal(mesh, edgeIdx);
   }
 
-  for(int level = 0; level < k_size; level++) {
-    for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
-      auto [x, y] = wrapper.nodeLocation(nodeIdx);
-      auto [ui, vi] = sphericalHarmonic(x, y);
+  for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+    auto [x, y] = wrapper.nodeLocation(nodeIdx);
+    auto [ui, vi] = sphericalHarmonic(x, y);
+    for(int level = 0; level < k_size; level++) {
       u(nodeIdx, level) = ui;
       v(nodeIdx, level) = vi;
     }
   }
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [nx, ny] = primal_normal_cache[edgeIdx];
-      auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-      auto [ui, vi] = sphericalHarmonic(x, y);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    auto [nx, ny] = primal_normal_cache[edgeIdx];
+    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto [ui, vi] = sphericalHarmonic(x, y);
+    for(int level = 0; level < k_size; level++) {
       // vn(edgeIdx, level) = ui * nx + vi * ny;
       vn(edgeIdx, level) = ui * 1. + vi * 1.;
     }
   }
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
-      auto [ui, vi] = analyticalLaplacian(x, y);
-      auto [nx, ny] = primal_normal_cache[edgeIdx];
-      ;
-      nabla2_sol(edgeIdx, level) = analyticalScalarLaplacian(x, y);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    auto [ui, vi] = analyticalLaplacian(x, y);
+    auto [nx, ny] = primal_normal_cache[edgeIdx];
+    double analytical = analyticalScalarLaplacian(x, y);
+    for(int level = 0; level < k_size; level++) {
+      nabla2_sol(edgeIdx, level) = analytical;
       // nabla2_sol(edgeIdx, level) = ui * nx + vi * ny;
     }
   }
@@ -318,13 +318,15 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // initialize geometrical info on edges
   //===------------------------------------------------------------------------------------------===//
-  for(int level = 0; level < k_size; level++) {
-    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-      inv_primal_edge_length(edgeIdx, level) = 1. / wrapper.edgeLength(mesh, edgeIdx);
+  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+    double edgeLength = wrapper.edgeLength(mesh, edgeIdx);
+    double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
+    dawn::float_type vert_vert_length = sqrt(3.) * edgeLength;
+    for(int level = 0; level < k_size; level++) {
+      inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
       // dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
-      dawn::float_type vert_vert_length = sqrt(3.) * wrapper.edgeLength(mesh, edgeIdx);
       inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
-      tangent_orientation(edgeIdx, level) = wrapper.tangentOrientation(mesh, edgeIdx);
+      tangent_orientation(edgeIdx, level) = tangentOrientation;
     }
   }
 
@@ -368,7 +370,7 @@ int main(int argc, char const* argv[]) {
   time_t toc = clock();
 
   if(verbose) {
-    std::cout << "initialization took " << (toc - tic) / ((double)CLOCKS_PER_SEC) << "seconds\n";
+    std::cout << "initialization took " << (toc - tic) / ((double)CLOCKS_PER_SEC) << " seconds \n";
   }
 
   //===------------------------------------------------------------------------------------------===//
@@ -379,14 +381,39 @@ int main(int argc, char const* argv[]) {
       inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
       vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
 
+  const int warmup_runs = 100;
+  for(int i = 0; i < warmup_runs; i++) {
+    lapl.run();
+    lapl.reset();
+  }
+
   const int nruns = 100;
+  std::vector<dawn::float_type> times(nruns);
   for(int i = 0; i < nruns; i++) {
     lapl.run();
+    times[i] = lapl.get_time();
+    lapl.reset();
   }
   lapl.CopyResultToHost(kh_smag, nabla2);
 
-  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << lapl.get_time() / nruns
-            << "\n";
+  auto mean = [](const std::vector<dawn::float_type>& times) {
+    dawn::float_type avg = 0.;
+    for(auto time : times) {
+      avg += time;
+    }
+    return avg / times.size();
+  };
+  auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
+    auto avg = mean(times);
+    dawn::float_type sd = 0.;
+    for(auto time : times) {
+      sd += (time - avg) * (time - avg);
+    }
+    return sqrt(1. / (times.size() - 1) * sd);
+  };
+
+  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
+            << " with standard deviation of: " << standard_deviation(times) << "\n";
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
@@ -406,7 +433,8 @@ int main(int argc, char const* argv[]) {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
     printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
-  {
+
+  if(w == 340) {
     auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
     printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
   }
