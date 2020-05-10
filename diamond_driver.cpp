@@ -36,141 +36,35 @@
 #include "atlas_utils/utils/AtlasCartesianWrapper.h"
 #include "atlas_utils/utils/AtlasFromNetcdf.h"
 #include "atlas_utils/utils/GenerateRectAtlasMesh.h"
+#include "atlas_utils/utils/GenerateStrIndxAtlasMesh.h"
 
 // io
 #include "atlas_utils/stencils/io/atlasIO.h"
 
 #include "driver-includes/defs.hpp"
 
-// determines if a cells is a downward triangle in the Atlas original indexing layout
-bool cellIsDownwardTriangleOrig(const atlas::Mesh& mesh, int cell_idx) {
-  auto ncols = mesh.cells().cell_connectivity().cols(cell_idx);
-  for(int jc = 0; jc < ncols; ++jc) {
-    auto neigh_idx = mesh.cells().cell_connectivity()(cell_idx, jc);
-    if(neigh_idx < 0)
-      continue;
-
-    if(neigh_idx > cell_idx + 1) {
-      return true;
-    } else if(neigh_idx < cell_idx - 1) {
-      return false;
-    }
+std::string getCmdOption(const char** begin, const char** end, const std::string& option) {
+  const char** itr = std::find(begin, end, option);
+  if(itr != end && ++itr != end) {
+    return *itr;
   }
+  throw std::runtime_error("error, option :" + option + " not specified");
 
-  // If we are here is because we could not find a neighbour cell with offset > +-1
-  // It can be that it is at the boundary. In this case we can determine its
-  // triangle orientation based on the neighbour triangle orientation
-  ncols = mesh.cells().cell_connectivity().cols(cell_idx);
-  for(int jc = 0; jc < ncols; ++jc) {
-    auto neigh_idx = mesh.cells().cell_connectivity()(cell_idx, jc);
-    if(neigh_idx != (cell_idx - 1) && neigh_idx != (cell_idx + 1))
-      continue;
-
-    if(cellIsDownwardTriangleOrig(mesh, neigh_idx)) {
-      return false;
-    } else {
-      return true;
-    }
-  }
-  throw std::runtime_error("longest stride neighbour not found");
-  return false;
-}
-// determines if a cells is a downward triangle in the structured indexing layout
-bool cellIsDownwardTriangleStr(const atlas::Mesh& mesh, int cell_idx, int ncols) {
-  return (cell_idx % ncols) >= ncols / 2;
+  return 0;
 }
 
-bool cellIsDownwardTriangle(const atlas::Mesh& mesh, int cell_idx, int ncols,
-                            bool structuredLayout) {
-  if(structuredLayout) {
-    return cellIsDownwardTriangleStr(mesh, cell_idx, ncols);
-  } else {
-    return cellIsDownwardTriangleOrig(mesh, cell_idx);
-  }
+bool cmdOptionExists(const char** begin, const char** end, const std::string& option) {
+  return std::find(begin, end, option) != end;
 }
 
-// index replacement of cells in the cell connectivity
-void replaceCellConnectivity(atlas::Mesh const& inmesh, atlas::Mesh& outmesh, int cidx, int ncidx) {
-  auto ncols = inmesh.cells().node_connectivity().cols(cidx);
-  for(int i = 0; i < ncols; ++i) {
-    auto conn_value = inmesh.cells().node_connectivity()(cidx, i);
-
-    outmesh.cells().node_connectivity().set(ncidx, i, conn_value);
-  }
-
-  // ncols = inmesh.cells().edge_connectivity().cols(cidx);
-  // for(int i = 0; i < ncols; ++i) {
-  //   auto conn_value = inmesh.cells().edge_connectivity()(cidx, i);
-
-  //   outmesh.cells().edge_connectivity().set(ncidx, i, conn_value);
-  // }
+void printHelp(std::string program) {
+  std::cout << program << " [options]" << std::endl;
+  std::cout << "required arguments:" << std::endl;
+  std::cout << " -ny <ny>          : number of rows for a square domain" << std::endl;
+  std::cout << "optional arguments:" << std::endl;
+  std::cout << " -str              : structured indexing layout" << std::endl;
+  std::cout << " -d                 : debug " << std::endl;
 }
-
-// compute the idx of a cell using a structured indexing layout
-// col_idx is the column index considering that eah triangle
-// (downward and upward) is a new column
-int getStructuredIdxCell(int row_idx, int col_idx, int ncols) {
-
-  // color 0 for upward triangles
-  int color = -1;
-  if(row_idx % 2 == 0) {
-    color = ((col_idx + 1) % 2 == 0) ? 0 : 1;
-  } else {
-    color = ((col_idx) % 2 == 0) ? 0 : 1;
-  }
-  // new cell index offset wrt first cell in the row
-  int ncidx_norm = col_idx / 2 + color * ncols / 2;
-
-  return ncidx_norm + row_idx * ncols;
-}
-
-int computeEdgeNeighOfCell(atlas::Mesh& mesh, int row_idx, int col_idx, int color, int ncols) {
-
-  auto cellIdx = getStructuredIdxCell(row_idx, col_idx, ncols);
-
-  // leftmost edge of left most cell of rows that start with an upward triangle
-  if(col_idx == 0 && (!cellIsDownwardTriangle(mesh, cellIdx, ncols, true)) && color == 0)
-    return -1;
-  // rightmost edge of right most cell of rows that end with an upward triangle
-  if(col_idx == ncols - 1 && !cellIsDownwardTriangle(mesh, cellIdx, ncols, true) && color == 1)
-    return -1;
-  // bottom edges of domain
-  if(row_idx == 0 && !cellIsDownwardTriangle(mesh, cellIdx, ncols, true) && color == 2)
-    return -1;
-
-  if(!cellIsDownwardTriangle(mesh, cellIdx, ncols, true)) {
-    // upward triangle
-    if(color == 0)
-      return computeEdgeNeighOfCell(mesh, row_idx, col_idx - 1, 2, ncols);
-    else if(color == 1)
-      return computeEdgeNeighOfCell(mesh, row_idx, col_idx + 1, 0, ncols);
-    else if(color == 2)
-      return computeEdgeNeighOfCell(mesh, row_idx - 1, col_idx, 1, ncols);
-  }
-  auto j = col_idx / 2;
-  auto njcols = ncols / 2;
-
-  return color * njcols + j + row_idx * njcols * 3;
-}
-
-std::tuple<int, int> computeCartCoordStr(int cidx, int jncols) {
-  auto row_idx = cidx / jncols;
-  // cell index offset wrt first cell in the row
-  int offset = 0;
-  if(row_idx % 2 == 0) {
-    if(cidx % jncols < jncols / 2) {
-      offset = 1;
-    }
-  } else {
-    if(cidx % jncols >= jncols / 2) {
-      offset = 1;
-    }
-  }
-  auto col = (cidx % (jncols / 2)) * 2 + offset;
-
-  return {row_idx, col};
-}
-
 std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
 MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_type>& ref,
               const atlasInterface::Field<dawn::float_type>& sol, int k_size);
@@ -183,11 +77,19 @@ int main(int argc, char const* argv[]) {
   // enable floating point exception
   // feenableexcept(FE_INVALID | FE_OVERFLOW);
 
-  if(argc != 2) {
-    std::cout << "intended use is\n" << argv[0] << " ny" << std::endl;
+  if(!cmdOptionExists(argv, argv + argc, "-ny")) {
+    printHelp(argv[0]);
     return -1;
   }
-  int w = atoi(argv[1]);
+
+  bool strLayout = false;
+  if(cmdOptionExists(argv, argv + argc, "-str")) {
+    strLayout = true;
+  }
+
+  int w = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
+  bool debug = cmdOptionExists(argv, argv + argc, "-d") ? true : false;
+
   int k_size = 128;
   dawn::float_type lDomain = M_PI;
 
@@ -200,131 +102,16 @@ int main(int argc, char const* argv[]) {
   const bool readMeshFromDisk = false;
 
   time_t meshgen_tic = clock();
-  auto [grid, mesh] = AtlasMeshRect(w);
 
-  atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
-  atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
-  atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
-  generateCell2CellTable(mesh, true);
-
-  {
+  atlas::Mesh mesh;
+  if(strLayout) {
+    mesh = AtlasStrIndxMesh(w);
+  } else {
+    mesh = AtlasMeshRect(w);
+  }
+  if(debug) {
     atlas::output::Gmsh gmsh("mesh.msh");
     gmsh.write(mesh);
-  }
-
-  auto [gridstr, meshstr] = AtlasMeshRect(w);
-  const atlas::StructuredGrid rg = atlas::StructuredGrid(grid);
-  if(!rg) {
-    throw std::runtime_error("Grid could not be cast to a Structured");
-  }
-
-  atlas::mesh::actions::build_edges(meshstr, atlas::util::Config("pole_edges", false));
-  atlas::mesh::actions::build_node_to_edge_connectivity(meshstr);
-  atlas::mesh::actions::build_element_to_edge_connectivity(meshstr);
-  generateCell2CellTable(meshstr, true);
-
-  atlas::mesh::Cells& cells = meshstr.cells();
-  // auto jncols = rg.nx()[0];
-  // for(auto val : rg.nx()) {
-  //   if(val != rg.nx()[0])
-  //     throw std::runtime_error("All rows of a structured grid should have same number of
-  //     columns");
-  // }
-
-  // auto inrows = rg.ny();
-  // if(inrows % 2 != 0) {
-  //   throw std::runtime_error("For a structured indexing nrows must be a pair number : " +
-  //                            std::to_string(inrows));
-  // }
-
-  // jncols is number of upward and downward triangles in a row
-  int inrows = 128;
-  int jncols = 256;
-
-  // re-do cell->node, cell->edge
-  for(int cidx = 0; cidx != mesh.cells().size(); ++cidx) {
-    auto row_idx = cidx / jncols;
-    // cell index offset wrt first cell in the row
-    auto cidx_norm = cidx % jncols;
-    // new cell index offset wrt first cell in the row
-    int ncidx = getStructuredIdxCell(row_idx, cidx_norm, jncols);
-
-    replaceCellConnectivity(mesh, meshstr, cidx, ncidx);
-
-    auto& ocell2cell = meshstr.cells().cell_connectivity();
-    bool isDownward = cellIsDownwardTriangle(mesh, cidx, jncols, false);
-
-    if(isDownward) {
-      ocell2cell.set(
-          ncidx, 0,
-          (row_idx == inrows - 1) ? -1 : getStructuredIdxCell(row_idx + 1, cidx_norm, jncols));
-      ocell2cell.set(ncidx, 1,
-                     (cidx_norm == 0) ? -1 : getStructuredIdxCell(row_idx, cidx_norm - 1, jncols));
-      ocell2cell.set(
-          ncidx, 2,
-          (cidx_norm == jncols - 1) ? -1 : getStructuredIdxCell(row_idx, cidx_norm + 1, jncols));
-    } else {
-      ocell2cell.set(ncidx, 0,
-                     (cidx_norm == 0) ? -1 : getStructuredIdxCell(row_idx, cidx_norm - 1, jncols));
-      ocell2cell.set(
-          ncidx, 1,
-          (cidx_norm == jncols - 1) ? -1 : getStructuredIdxCell(row_idx, cidx_norm + 1, jncols));
-      ocell2cell.set(ncidx, 2,
-                     (row_idx == 0) ? -1 : getStructuredIdxCell(row_idx - 1, cidx_norm, jncols));
-    }
-  }
-
-  auto& cell2edges = meshstr.cells().edge_connectivity();
-  auto& edge2cells = meshstr.edges().cell_connectivity();
-
-  int ghost = inrows * (jncols / 2) * 3;
-  for(int cidx = 0; cidx != meshstr.cells().size(); ++cidx) {
-    bool isDownward = cellIsDownwardTriangle(meshstr, cidx, jncols, true);
-
-    auto row_idx = cidx / jncols;
-    // cell index offset wrt first cell in the row
-    int offset = 0;
-    if(row_idx % 2 == 0) {
-      if(cidx % jncols < jncols / 2) {
-        offset = 1;
-      }
-    } else {
-      if(cidx % jncols >= jncols / 2) {
-        offset = 1;
-      }
-    }
-    auto col = (cidx % (jncols / 2)) * 2 + offset;
-
-    std::cout << "========================" << row_idx << "," << col << std::endl;
-    for(int h = 0; h < 3; ++h) {
-      auto edgeIdx = computeEdgeNeighOfCell(meshstr, row_idx, col, h, jncols);
-      if(edgeIdx == -1)
-        edgeIdx = ghost++;
-
-      cell2edges.set(cidx, h, edgeIdx);
-      edge2cells.set(edgeIdx, isDownward ? 0 : 1, cidx);
-    }
-  }
-
-  for(int i = 0; i < meshstr.cells().size(); ++i) {
-    std::cout << " PP cell " << i << ":";
-    for(int j = 0; j < 3; ++j) {
-      std::cout << " , " << cell2edges(i, j);
-    }
-    std::cout << std::endl;
-  }
-
-  for(int i = 0; i < meshstr.edges().size(); ++i) {
-    std::cout << " TT cell " << i << ":";
-    for(int j = 0; j < 2; ++j) {
-      std::cout << " , " << edge2cells(i, j);
-    }
-    std::cout << std::endl;
-  }
-
-  {
-    atlas::output::Gmsh gmsh("mesh2.msh");
-    gmsh.write(meshstr);
   }
 
   time_t meshgen_toc = clock();
@@ -581,7 +368,7 @@ int main(int argc, char const* argv[]) {
   time_t toc = clock();
 
   if(verbose) {
-    std::cout << "initialization took " << (toc - tic) / ((double)CLOCKS_PER_SEC) << "seconds\n ";
+    std::cout << "initialization took " << (toc - tic) / ((double)CLOCKS_PER_SEC) << "seconds\n";
   }
 
   //===------------------------------------------------------------------------------------------===//
