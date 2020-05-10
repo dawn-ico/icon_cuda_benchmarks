@@ -87,7 +87,9 @@ int main(int argc, char const* argv[]) {
     strLayout = true;
   }
 
-  int w = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
+  int ny = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
+  int nx = std::stoi(getCmdOption(argv, argv + argc, "-nx"));
+
   bool debug = cmdOptionExists(argv, argv + argc, "-d") ? true : false;
 
   int k_size = 80;
@@ -105,9 +107,9 @@ int main(int argc, char const* argv[]) {
 
   atlas::Mesh mesh;
   if(strLayout) {
-    mesh = AtlasStrIndxMesh(w);
+    mesh = AtlasStrIndxMesh(nx, ny);
   } else {
-    mesh = AtlasMeshSquare(w);
+    mesh = AtlasMeshRect(nx, ny);
   }
   if(debug) {
     atlas::output::Gmsh gmsh("mesh.msh");
@@ -431,12 +433,12 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
-    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
   }
 
-  if(w == 340) {
+  if(nx == 340 && ny == 340) {
     auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
-    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
   }
 
   return 0;
