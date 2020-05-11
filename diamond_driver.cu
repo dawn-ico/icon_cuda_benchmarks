@@ -29,7 +29,7 @@
 #include "atlas_interface.hpp"
 
 // icon stencil
-#include "diamond_stencil.h"
+#include "diamond_generated.cuh"
 
 // atlas utilities
 #include "atlas_utils/utils/AtlasCartesianWrapper.h"
@@ -47,6 +47,17 @@ MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_
 std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
 MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::float_type>& sol,
               int num_edges, int k_size);
+
+// static auto View(std::tuple<atlas::Field, atlasInterface::Field<dawn::float_type>> tuple)
+//     -> atlasInterface::Field<dawn::float_type> {
+//   return std::get<1>(tuple);
+// };
+
+// static auto View(std::tuple<atlas::Field, atlasInterface::SparseDimension<dawn::float_type>>
+// tuple)
+//     -> atlasInterface::SparseDimension<dawn::float_type> {
+//   return std::get<1>(tuple);
+// };
 
 int main(int argc, char const* argv[]) {
   // enable floating point exception
@@ -336,38 +347,43 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // stencil call
   //===------------------------------------------------------------------------------------------===/
-  // DiamondStencil::diamond_stencil lapl(
-  //     mesh, k_size, diff_multfac_smag, tangent_orientation, inv_primal_edge_length,
-  //     inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
-  //     vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
+  dawn_generated::cuda_ico::ICON_laplacian_diamond_stencil<atlasInterface::atlasTag, 4>::stencil_333
+      lapl(mesh, k_size, std::get<1>(diff_multfac_smag), std::get<1>(tangent_orientation),
+           std::get<1>(inv_primal_edge_length), std::get<1>(inv_vert_vert_length), std::get<1>(u),
+           std::get<1>(v), std::get<1>(primal_normal_x), std::get<1>(primal_normal_y),
+           std::get<1>(dual_normal_x), std::get<1>(dual_normal_y), std::get<1>(vn_vert),
+           std::get<1>(vn), std::get<1>(dvt_tang), std::get<1>(dvt_norm), std::get<1>(kh_smag_1),
+           std::get<1>(kh_smag_2), std::get<1>(kh_smag), std::get<1>(nabla2));
 
-  // const int nruns = 100;
-  // std::vector<dawn::float_type> times(nruns);
-  // for(int i = 0; i < nruns; i++) {
-  //   lapl.run();
-  //   times[i] = lapl.get_time();
-  //   lapl.reset();
-  // }
-  // lapl.CopyResultToHost(std::get<1>(kh_smag), std::get<1>(nabla2));
+  const int nruns = 100;
+  std::vector<dawn::float_type> times(nruns);
+  for(int i = 0; i < nruns; i++) {
+    lapl.run();
+    times[i] = lapl.get_time();
+    lapl.reset();
+  }
+  auto mean = [](const std::vector<dawn::float_type>& times) {
+    dawn::float_type avg = 0.;
+    for(auto time : times) {
+      avg += time;
+    }
+    return avg / times.size();
+  };
+  auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
+    auto avg = mean(times);
+    dawn::float_type sd = 0.;
+    for(auto time : times) {
+      sd += (time - avg) * (time - avg);
+    }
+    return sqrt(1. / (times.size() - 1) * sd);
+  };
 
-  // auto mean = [](const std::vector<dawn::float_type>& times) {
-  //   dawn::float_type avg = 0.;
-  //   for(auto time : times) {
-  //     avg += time;
-  //   }
-  //   return avg / times.size();
-  // };
-  // auto standard_deviation = [&](const std::vector<dawn::float_type>& times) {
-  //   auto avg = mean(times);
-  //   dawn::float_type sd = 0.;
-  //   for(auto time : times) {
-  //     sd += (time - avg) * (time - avg);
-  //   }
-  //   return sqrt(1. / (times.size() - 1) * sd);
-  // };
+  std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
+            << " with standard deviation of: " << standard_deviation(times) << "\n";
 
-  // std::cout << "average time for " << nruns << " run(s) of Laplacian: " << mean(times)
-  //           << " with standard deviation of: " << standard_deviation(times) << "\n";
+  lapl.CopyResultToHost(std::get<1>(vn_vert), std::get<1>(dvt_tang), std::get<1>(dvt_norm),
+                        std::get<1>(kh_smag_1), std::get<1>(kh_smag_2), std::get<1>(kh_smag),
+                        std::get<1>(nabla2));
 
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
@@ -383,17 +399,18 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  // {
-  //   auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), std::get<1>(nabla2_sol),
-  //                                       std::get<1>(nabla2), std::get<1>(k_size));
-  //   printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-  // }
+  {
+    auto L = MeasureErrors(wrapper.innerEdges(mesh), std::get<1>(nabla2_sol), std::get<1>(nabla2),
+                           k_size);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, std::get<0>(L), std::get<1>(L),
+           std::get<2>(L));
+  }
 
-  // if(w == 340) {
-  //   auto [Linf, L1, L2] =
-  //       MeasureErrors("kh_smag_ref.txt", std::get<1>(kh_smag), mesh.edges().size(), k_size);
-  //   printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
-  // }
+  if(w == 340) {
+    auto L = MeasureErrors("kh_smag_ref.txt", std::get<1>(kh_smag), mesh.edges().size(), k_size);
+    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, std::get<0>(L), std::get<1>(L),
+           std::get<2>(L));
+  }
 
   return 0;
 }

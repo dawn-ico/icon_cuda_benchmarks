@@ -128,17 +128,11 @@ atlas::Mesh meshType(atlasTag);
 
 int indexType(atlasTag);
 
-inline auto getCells(atlasTag, atlas::Mesh const& m) {
-  return utility::irange(0, m.cells().size());
-}
-inline auto getEdges(atlasTag, atlas::Mesh const& m) {
-  return utility::irange(0, m.edges().size());
-}
-inline auto getVertices(atlasTag, atlas::Mesh const& m) {
-  return utility::irange(0, m.nodes().size());
-}
+auto getCells(atlasTag, atlas::Mesh const& m) { return utility::irange(0, m.cells().size()); }
+auto getEdges(atlasTag, atlas::Mesh const& m) { return utility::irange(0, m.edges().size()); }
+auto getVertices(atlasTag, atlas::Mesh const& m) { return utility::irange(0, m.nodes().size()); }
 
-inline std::vector<int> getNeighs(const atlas::Mesh::HybridElements::Connectivity& conn, int idx) {
+std::vector<int> getNeighs(const atlas::Mesh::HybridElements::Connectivity& conn, int idx) {
   std::vector<int> neighs;
   for(int n = 0; n < conn.cols(idx); ++n) {
     int nbhIdx = conn(idx, n);
@@ -149,7 +143,7 @@ inline std::vector<int> getNeighs(const atlas::Mesh::HybridElements::Connectivit
   return neighs;
 }
 
-inline std::vector<int> getNeighs(const atlas::mesh::Nodes::Connectivity& conn, int idx) {
+std::vector<int> getNeighs(const atlas::mesh::Nodes::Connectivity& conn, int idx) {
   std::vector<int> neighs;
   for(int n = 0; n < conn.cols(idx); ++n) {
     int nbhIdx = conn(idx, n);
@@ -170,7 +164,7 @@ struct key_hash : public std::unary_function<key_t, std::size_t> {
 };
 
 // recursive function collecting neighbors succesively
-inline void getNeighborsImpl(
+void getNeighborsImpl(
     const std::unordered_map<key_t, std::function<std::vector<int>(int)>, key_hash>& nbhTables,
     std::vector<dawn::LocationType>& chain, dawn::LocationType targetType, std::vector<int> front,
     std::list<int>& result) {
@@ -218,8 +212,8 @@ private:
 };
 
 // entry point, kicks off the recursive function above if required
-inline std::vector<int> getNeighbors(atlas::Mesh const& mesh, std::vector<dawn::LocationType> chain,
-                                     int idx) {
+std::vector<int> getNeighbors(atlasTag, atlas::Mesh const& mesh,
+                              std::vector<dawn::LocationType> chain, int idx) {
 
   // target type is at the end of the chain (we collect all neighbors of this type "along" the
   // chain)
@@ -293,7 +287,7 @@ auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
             std::vector<dawn::LocationType> chain, Op&& op, std::vector<WeightT>&& weights) {
   static_assert(std::is_arithmetic<WeightT>::value, "weights need to be of arithmetic type!\n");
   int i = 0;
-  for(auto&& objIdx : getNeighbors(m, chain, idx))
+  for(auto&& objIdx : getNeighbors(atlasTag{}, m, chain, idx))
     op(init, objIdx, weights[i++]);
   return init;
 }
@@ -305,7 +299,7 @@ auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
 template <typename Init, typename Op>
 auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
             std::vector<dawn::LocationType> chain, Op&& op) {
-  for(auto&& objIdx : getNeighbors(m, chain, idx))
+  for(auto&& objIdx : getNeighbors(atlasTag{}, m, chain, idx))
     op(init, objIdx);
   return init;
 }
