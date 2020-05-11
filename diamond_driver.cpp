@@ -23,6 +23,7 @@
 #include <atlas/grid.h>
 #include <atlas/mesh.h>
 #include <atlas/mesh/actions/BuildEdges.h>
+#include <atlas/output/Gmsh.h>
 #include <atlas/util/CoordinateEnums.h>
 
 // atlas interface for dawn generated code
@@ -35,12 +36,35 @@
 #include "atlas_utils/utils/AtlasCartesianWrapper.h"
 #include "atlas_utils/utils/AtlasFromNetcdf.h"
 #include "atlas_utils/utils/GenerateRectAtlasMesh.h"
+#include "atlas_utils/utils/GenerateStrIndxAtlasMesh.h"
 
 // io
 #include "atlas_utils/stencils/io/atlasIO.h"
 
 #include "driver-includes/defs.hpp"
 
+std::string getCmdOption(const char** begin, const char** end, const std::string& option) {
+  const char** itr = std::find(begin, end, option);
+  if(itr != end && ++itr != end) {
+    return *itr;
+  }
+  throw std::runtime_error("error, option :" + option + " not specified");
+
+  return 0;
+}
+
+bool cmdOptionExists(const char** begin, const char** end, const std::string& option) {
+  return std::find(begin, end, option) != end;
+}
+
+void printHelp(std::string program) {
+  std::cout << program << " [options]" << std::endl;
+  std::cout << "required arguments:" << std::endl;
+  std::cout << " -ny <ny>          : number of rows for a square domain" << std::endl;
+  std::cout << "optional arguments:" << std::endl;
+  std::cout << " -str              : structured indexing layout" << std::endl;
+  std::cout << " -d                 : debug " << std::endl;
+}
 std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
 MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_type>& ref,
               const atlasInterface::Field<dawn::float_type>& sol, int k_size);
@@ -53,11 +77,21 @@ int main(int argc, char const* argv[]) {
   // enable floating point exception
   // feenableexcept(FE_INVALID | FE_OVERFLOW);
 
-  if(argc != 2) {
-    std::cout << "intended use is\n" << argv[0] << " ny" << std::endl;
+  if(!cmdOptionExists(argv, argv + argc, "-ny")) {
+    printHelp(argv[0]);
     return -1;
   }
-  int w = atoi(argv[1]);
+
+  bool strLayout = false;
+  if(cmdOptionExists(argv, argv + argc, "-str")) {
+    strLayout = true;
+  }
+
+  int ny = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
+  int nx = std::stoi(getCmdOption(argv, argv + argc, "-nx"));
+
+  bool debug = cmdOptionExists(argv, argv + argc, "-d") ? true : false;
+
   int k_size = 80;
   dawn::float_type lDomain = M_PI;
 
@@ -69,12 +103,19 @@ int main(int argc, char const* argv[]) {
   const bool verbose = true;
   const bool readMeshFromDisk = false;
 
-  atlas::Mesh mesh;
   time_t meshgen_tic = clock();
-  mesh = AtlasMeshSquare(w);
-  atlas::mesh::actions::build_edges(mesh, atlas::util::Config("pole_edges", false));
-  atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
-  atlas::mesh::actions::build_element_to_edge_connectivity(mesh);
+
+  atlas::Mesh mesh;
+  if(strLayout) {
+    mesh = AtlasStrIndxMesh(nx, ny);
+  } else {
+    mesh = AtlasMeshRect(nx, ny);
+  }
+  if(debug) {
+    atlas::output::Gmsh gmsh("mesh.msh");
+    gmsh.write(mesh);
+  }
+
   time_t meshgen_toc = clock();
 
   if(verbose) {
@@ -392,12 +433,12 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   {
     auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
-    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
   }
 
-  if(w == 340) {
+  if(nx == 340 && ny == 340) {
     auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
-    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / w, Linf, L1, L2);
+    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
   }
 
   return 0;
