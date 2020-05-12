@@ -75,8 +75,8 @@ __global__ void merged(int numEdges, int numVertices, int kSize, const int* __re
       const int ecvSparseKOffset = kIter * numEdges * E_C_V_SIZE;
       const int denseIdx = edgesDenseKOffset + pidx;
 
-      const dawn::float_type __local_inv_primal = __ldg(&inv_primal_edge_length[denseIdx]);
-      const dawn::float_type __local_inv_vert = __ldg(&inv_vert_vert_length[denseIdx]);
+      const dawn::float_type __local_inv_primal = inv_primal_edge_length[denseIdx];
+      const dawn::float_type __local_inv_vert = inv_vert_vert_length[denseIdx];
 
       const dawn::float_type weights_nabla[E_C_V_SIZE] = {
           __local_inv_primal * __local_inv_primal, __local_inv_primal * __local_inv_primal,
@@ -88,25 +88,25 @@ __global__ void merged(int numEdges, int numVertices, int kSize, const int* __re
       dawn::float_type lhs_tang = 0.;
       dawn::float_type lhs_norm = 0.;
       for(int nbhIter = 0; nbhIter < E_C_V_SIZE; nbhIter++) { // for(e->c->v)
-        int nbhIdx = __ldg(&ecvTable[pidx * E_C_V_SIZE + nbhIter]);
+        int nbhIdx = ecvTable[pidx * E_C_V_SIZE + nbhIter];
         if(nbhIdx == DEVICE_MISSING_VALUE) {
           continue;
         }
         const int sparseIdx = ecvSparseKOffset + nbhIter * numEdges + pidx;
-        float2 __local_uv = __ldg(&uv[verticesDenseKOffset + nbhIdx]);
-        float2 __local_primal_normal_vert = __ldg(&primal_normal_vert[sparseIdx]);
+        float2 __local_uv = uv[verticesDenseKOffset + nbhIdx];
+        float2 __local_primal_normal_vert = primal_normal_vert[sparseIdx];
         dawn::float_type __local_vn_vert = __local_uv.x * __local_primal_normal_vert.x +
                                            __local_uv.y * __local_primal_normal_vert.y;
         lhs_1 += __local_vn_vert * weights_1[nbhIter];
         lhs_2 += __local_vn_vert * weights_2[nbhIter];
         lhs_nabla += 4. * __local_vn_vert * weights_nabla[nbhIter];
-        float2 __local_dual_normal_vert = __ldg(&dual_normal_vert[sparseIdx]);
+        float2 __local_dual_normal_vert = dual_normal_vert[sparseIdx];
         dawn::float_type tang_norm_rhs =
             (__local_uv.x * __local_dual_normal_vert.x + __local_uv.y * __local_dual_normal_vert.y);
         lhs_tang += weights_tang[nbhIter] * tang_norm_rhs;
         lhs_norm += weights_norm[nbhIter] * tang_norm_rhs;
       }
-      const dawn::float_type __local_tangent_orientation = __ldg(&tangent_orientation[denseIdx]);
+      const dawn::float_type __local_tangent_orientation = tangent_orientation[denseIdx];
       lhs_tang = lhs_tang * __local_tangent_orientation;
 
       const dawn::float_type rhs_smag_1 =
@@ -116,7 +116,7 @@ __global__ void merged(int numEdges, int numVertices, int kSize, const int* __re
       const dawn::float_type rhs_smag_2 = lhs_2 * __local_inv_vert + lhs_tang * __local_inv_primal;
       const dawn::float_type kh_smag_2 = rhs_smag_2 * rhs_smag_2;
 
-      const dawn::float_type __local_vn = __ldg(&vn[denseIdx]);
+      const dawn::float_type __local_vn = vn[denseIdx];
 
       nabla2[denseIdx] = lhs_nabla - 8. * __local_vn * __local_inv_primal * __local_inv_primal -
                          8. * __local_vn * __local_inv_vert * __local_inv_vert;
