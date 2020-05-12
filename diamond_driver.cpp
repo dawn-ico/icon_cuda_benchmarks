@@ -72,6 +72,9 @@ MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_
 std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
 MeasureErrors(const std::string& refFname, const atlasInterface::Field<dawn::float_type>& sol,
               int num_edges, int k_size);
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(std::vector<int> indices, const std::vector<dawn::float_type>& ref,
+              const atlasInterface::Field<dawn::float_type>& sol, int k_size);
 
 int main(int argc, char const* argv[]) {
   // enable floating point exception
@@ -101,15 +104,29 @@ int main(int argc, char const* argv[]) {
   // like will certainly work too)
   const bool dbg_out = false;
   const bool verbose = true;
-  const bool readMeshFromDisk = false;
+  const bool readMeshFromDisk = true;
 
   time_t meshgen_tic = clock();
 
   atlas::Mesh mesh;
-  if(strLayout) {
-    mesh = AtlasStrIndxMesh(nx, ny);
+  if(!readMeshFromDisk) {
+    if(strLayout) {
+      mesh = AtlasStrIndxMesh(nx, ny);
+    } else {
+      mesh = AtlasMeshRect(nx, ny);
+    }
   } else {
-    mesh = AtlasMeshRect(nx, ny);
+    mesh = *AtlasMeshFromNetCDFComplete("grid.nc");
+    auto lonlat = atlas::array::make_view<double, 2>(mesh.nodes().lonlat());
+    auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
+
+    auto lonToRad = [](double rad) { return rad * (0.5 * M_PI) / 90; };
+    auto latToRad = [](double rad) { return rad * (M_PI) / 180; };
+
+    for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+      xy(nodeIdx, atlas::LON) = lonToRad(lonlat(nodeIdx, atlas::LON));
+      xy(nodeIdx, atlas::LAT) = latToRad(lonlat(nodeIdx, atlas::LAT));
+    }
   }
   if(debug) {
     atlas::output::Gmsh gmsh("mesh.msh");
@@ -124,7 +141,7 @@ int main(int argc, char const* argv[]) {
   }
 
   // wrapper with various atlas helper functions
-  AtlasToCartesian wrapper(mesh, true);
+  AtlasToCartesian wrapper(mesh, !readMeshFromDisk);
 
   const int edgesPerVertex = 6;
   const int edgesPerCell = 3;
@@ -320,15 +337,27 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // initialize geometrical info on edges
   //===------------------------------------------------------------------------------------------===//
-  for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
-    double edgeLength = wrapper.edgeLength(mesh, edgeIdx);
-    double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
-    dawn::float_type vert_vert_length = sqrt(3.) * edgeLength;
-    for(int level = 0; level < k_size; level++) {
-      inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
-      // dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
-      inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
-      tangent_orientation(edgeIdx, level) = tangentOrientation;
+  if(!readMeshFromDisk) {
+    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+      double edgeLength = wrapper.edgeLength(mesh, edgeIdx);
+      double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
+      dawn::float_type vert_vert_length = sqrt(3.) * edgeLength;
+      for(int level = 0; level < k_size; level++) {
+        inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
+        inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
+        tangent_orientation(edgeIdx, level) = tangentOrientation;
+      }
+    }
+  } else {
+    for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+      double edgeLength = wrapper.edgeLength(mesh, edgeIdx);
+      double tangentOrientation = wrapper.tangentOrientation(mesh, edgeIdx);
+      dawn::float_type vert_vert_length = wrapper.vertVertLength(mesh, edgeIdx);
+      for(int level = 0; level < k_size; level++) {
+        inv_primal_edge_length(edgeIdx, level) = 1. / edgeLength;
+        inv_vert_vert_length(edgeIdx, level) = (vert_vert_length == 0) ? 0 : 1. / vert_vert_length;
+        tangent_orientation(edgeIdx, level) = tangentOrientation;
+      }
     }
   }
 
@@ -424,21 +453,57 @@ int main(int argc, char const* argv[]) {
   //               wrapper.innerEdges(mesh));
   // dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
   //               wrapper.innerEdges(mesh));
-
-  // dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, k_size / 2,
+  // dumpEdgeField("diamondLaplICONatlas_sol.txt", mesh, wrapper, nabla2_sol, 0,
   //               wrapper.innerEdges(mesh));
 
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
-    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
-  }
 
-  if(nx == 340 && ny == 340) {
-    auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
-    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+  // the current test case, or rather, the analytical solution (to the current test case) is only
+  // valid if the equilat triangles are aligned with the x/y axis. this is the case for the atlas
+  // mesh generator, but not necessarily for imported netcdf meshes. for netcdf meshes the current
+  // best bet is to simply compare against a manual computation of the same FD laplacian
+
+  if(!readMeshFromDisk) {
+    {
+      auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
+      printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+    }
+
+    if(nx == 340 && ny == 340) {
+      auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
+      printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+    }
+  } else {
+    std::vector<dawn::float_type> diamondManual(mesh.edges().size());
+    for(int level = 0; level < k_size; level++) {
+      for(int edgeIdx = 0; edgeIdx < mesh.edges().size(); edgeIdx++) {
+        auto diamondNbh = atlasInterface::getNeighbors(
+            atlasInterface::atlasTag{}, mesh,
+            {dawn::LocationType::Edges, dawn::LocationType::Cells, dawn::LocationType::Vertices},
+            edgeIdx);
+
+        if(diamondNbh.size() < 4) {
+          diamondManual[edgeIdx] = 0.;
+        }
+
+        std::vector<dawn::float_type> diamondVals = {
+            u(diamondNbh[0], level) + v(diamondNbh[0], level),
+            u(diamondNbh[1], level) + v(diamondNbh[1], level),
+            u(diamondNbh[2], level) + v(diamondNbh[2], level),
+            u(diamondNbh[3], level) + v(diamondNbh[3], level)};
+        double hx = 0.5 * wrapper.edgeLength(mesh, edgeIdx);
+        double hy = 0.5 * wrapper.vertVertLength(mesh, edgeIdx);
+
+        double fxx = (diamondVals[0] + diamondVals[1] - 2 * (vn(edgeIdx, level))) / (hx * hx);
+        double fyy = (diamondVals[2] + diamondVals[3] - 2 * (vn(edgeIdx, level))) / (hy * hy);
+
+        diamondManual[edgeIdx] = fxx + fyy;
+      }
+    }
+    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), diamondManual, nabla2, k_size);
+    printf("%e %e %e\n", Linf, L1, L2);
   }
 
   return 0;
@@ -489,5 +554,24 @@ MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_
   }
   L1 /= (indices.size() * k_size);
   L2 = sqrt(L2) / sqrt(indices.size() * k_size);
+  return {Linf, L1, L2};
+}
+
+std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
+MeasureErrors(std::vector<int> indices, const std::vector<dawn::float_type>& ref,
+              const atlasInterface::Field<dawn::float_type>& sol, int k_size) {
+  double Linf = 0.;
+  double L1 = 0.;
+  double L2 = 0.;
+  for(int level = 0; level < k_size; level++) {
+    for(int idx : indices) {
+      double dif = ref[idx] - sol(idx, level);
+      Linf = fmax(fabs(dif), Linf);
+      L1 += fabs(dif);
+      L2 += dif * dif;
+    }
+  }
+  L1 /= indices.size();
+  L2 = sqrt(L2) / sqrt(indices.size());
   return {Linf, L1, L2};
 }

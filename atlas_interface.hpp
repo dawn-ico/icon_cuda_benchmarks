@@ -218,8 +218,8 @@ private:
 };
 
 // entry point, kicks off the recursive function above if required
-inline std::vector<int> getNeighbors(atlas::Mesh const& mesh, std::vector<dawn::LocationType> chain,
-                                     int idx) {
+inline std::vector<int> getNeighbors(atlasTag, atlas::Mesh const& mesh,
+                                     std::vector<dawn::LocationType> chain, int idx) {
 
   // target type is at the end of the chain (we collect all neighbors of this type "along" the
   // chain)
@@ -289,11 +289,11 @@ inline std::vector<int> getNeighbors(atlas::Mesh const& mesh, std::vector<dawn::
 //===------------------------------------------------------------------------------------------===//
 
 template <typename Init, typename Op, typename WeightT>
-auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
+auto reduce(atlasTag tag, atlas::Mesh const& m, int idx, Init init,
             std::vector<dawn::LocationType> chain, Op&& op, std::vector<WeightT>&& weights) {
   static_assert(std::is_arithmetic<WeightT>::value, "weights need to be of arithmetic type!\n");
   int i = 0;
-  for(auto&& objIdx : getNeighbors(m, chain, idx))
+  for(auto&& objIdx : getNeighbors(tag, m, chain, idx))
     op(init, objIdx, weights[i++]);
   return init;
 }
@@ -303,9 +303,9 @@ auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
 //===------------------------------------------------------------------------------------------===//
 
 template <typename Init, typename Op>
-auto reduce(atlasTag, atlas::Mesh const& m, int idx, Init init,
+auto reduce(atlasTag tag, atlas::Mesh const& m, int idx, Init init,
             std::vector<dawn::LocationType> chain, Op&& op) {
-  for(auto&& objIdx : getNeighbors(m, chain, idx))
+  for(auto&& objIdx : getNeighbors(tag, m, chain, idx))
     op(init, objIdx);
   return init;
 }

@@ -387,7 +387,7 @@ void generateNbhTable(atlas::Mesh const& mesh, std::vector<dawn::LocationType> c
 
   std::vector<int> hostTable;
   for(int elem : elems) {
-    auto neighbors = atlasInterface::getNeighbors(mesh, chain, elem);
+    auto neighbors = atlasInterface::getNeighbors(atlasInterface::atlasTag(), mesh, chain, elem);
     for(int nbhIdx = 0; nbhIdx < numNbhPerElement; nbhIdx++) {
       if(nbhIdx < neighbors.size()) {
         hostTable.push_back(neighbors[nbhIdx]);
