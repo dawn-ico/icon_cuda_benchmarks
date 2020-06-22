@@ -78,11 +78,15 @@ bool cmdOptionExists(const char** begin, const char** end, const std::string& op
 
 void printHelp(std::string program) {
   std::cout << program << " [options]" << std::endl;
-  std::cout << "required arguments:" << std::endl;
-  std::cout << " -ny <ny>          : number of rows for a square domain" << std::endl;
+  std::cout << "either specifiy resolution:" << std::endl;
+  std::cout << " -ny <ny> -nx <nx>: number of rows and cols for a rectangular domain" << std::endl;
+  std::cout << "or pass a netcdf file:" << std::endl;
+  std::cout << " -f <grid.nc>" << std::endl;
   std::cout << "optional arguments:" << std::endl;
-  std::cout << " -str              : structured indexing layout" << std::endl;
-  std::cout << " -d                 : debug " << std::endl;
+  std::cout
+      << " -str              : structured indexing layout (only for grid defined by cols x rows"
+      << std::endl;
+  std::cout << " -d                : debug " << std::endl;
 }
 std::tuple<dawn::float_type, dawn::float_type, dawn::float_type>
 MeasureErrors(std::vector<int> indices, const atlasInterface::Field<dawn::float_type>& ref,
@@ -96,19 +100,43 @@ int main(int argc, char const* argv[]) {
   // enable floating point exception
   // feenableexcept(FE_INVALID | FE_OVERFLOW);
 
-  if(!cmdOptionExists(argv, argv + argc, "-ny")) {
+  bool generateMesh =
+      cmdOptionExists(argv, argv + argc, "-ny") && cmdOptionExists(argv, argv + argc, "-nx");
+
+  bool readMeshFromDisk = false;
+  std::string fname;
+  if(cmdOptionExists(argv, argv + argc, "-f")) {
+    readMeshFromDisk = true;
+    fname = getCmdOption(argv, argv + argc, "-f");
+  }
+
+  if(readMeshFromDisk && generateMesh) {
+    printf("either specify resolution or filename, not both\n");
     printHelp(argv[0]);
-    return -1;
+    return 1;
+  }
+
+  if(!readMeshFromDisk && !generateMesh) {
+    printHelp(argv[0]);
+    return 1;
   }
 
   bool strLayout = false;
   if(cmdOptionExists(argv, argv + argc, "-str")) {
+    if(readMeshFromDisk) {
+      printf("can't use strided indexing using netcdf meshs!\n");
+      printHelp(argv[0]);
+      return 1;
+    }
     printf("using strided layout!\n");
     strLayout = true;
   }
 
-  int ny = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
-  int nx = std::stoi(getCmdOption(argv, argv + argc, "-nx"));
+  int nx, ny;
+  if(generateMesh) {
+    nx = std::stoi(getCmdOption(argv, argv + argc, "-nx"));
+    ny = std::stoi(getCmdOption(argv, argv + argc, "-ny"));
+  }
 
   bool debug = cmdOptionExists(argv, argv + argc, "-d") ? true : false;
 
@@ -121,20 +149,38 @@ int main(int argc, char const* argv[]) {
   // like will certainly work too)
   const bool dbg_out = false;
   const bool verbose = true;
-  const bool readMeshFromDisk = false;
 
   time_t meshgen_tic = clock();
 
   atlas::Mesh mesh;
-  if(strLayout) {
+  if(generateMesh && strLayout) {
     mesh = AtlasStrIndxMesh(nx, ny);
     // the atlas str index mesh generator does not update the node to edge connectivity
     // while this conn table is not strictly needed for the computation of the diamond, it is needed
     // for error measurement (to determine the inner edges). Hence, if this table is not up to date,
     // wrong errors will be reported
     atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
-  } else {
+    printf("generated %d edges!\n", mesh.edges().size());
+  }
+  if(generateMesh && !strLayout) {
     mesh = AtlasMeshRect(nx, ny);
+    printf("generated %d edges!\n", mesh.edges().size());
+  }
+  if(readMeshFromDisk) {
+    printf("%s\n", fname.c_str());
+    mesh = *AtlasMeshFromNetCDFComplete(fname);
+    auto lonlat = atlas::array::make_view<double, 2>(mesh.nodes().lonlat());
+    auto xy = atlas::array::make_view<double, 2>(mesh.nodes().xy());
+
+    auto lonToRad = [](double rad) { return rad * (0.5 * M_PI) / 90; };
+    auto latToRad = [](double rad) { return rad * (M_PI) / 180; };
+
+    for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+      xy(nodeIdx, atlas::LON) = lonToRad(lonlat(nodeIdx, atlas::LON));
+      xy(nodeIdx, atlas::LAT) = latToRad(lonlat(nodeIdx, atlas::LAT));
+    }
+
+    printf("read %d cells from %s file from disk!\n", mesh.cells().size(), fname.c_str());
   }
   if(debug) {
     atlas::output::Gmsh gmsh("mesh.msh");
@@ -149,7 +195,7 @@ int main(int argc, char const* argv[]) {
   }
 
   // wrapper with various atlas helper functions
-  AtlasToCartesian wrapper(mesh, true);
+  AtlasToCartesian wrapper(mesh, !readMeshFromDisk);
 
   const int edgesPerVertex = 6;
   const int edgesPerCell = 3;
@@ -463,14 +509,16 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // measuring errors
   //===------------------------------------------------------------------------------------------===//
-  {
-    auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
-    printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
-  }
+  if(!readMeshFromDisk) {
+    {
+      auto [Linf, L1, L2] = MeasureErrors(wrapper.innerEdges(mesh), nabla2_sol, nabla2, k_size);
+      printf("[lap] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+    }
 
-  if(nx == 340 && ny == 340) {
-    auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
-    printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+    if(nx == 340 && ny == 340) {
+      auto [Linf, L1, L2] = MeasureErrors("kh_smag_ref.txt", kh_smag, mesh.edges().size(), k_size);
+      printf("[kh_smag] dx: %e L_inf: %e L_1: %e L_2: %e\n", 180. / nx, Linf, L1, L2);
+    }
   }
 
   return 0;
