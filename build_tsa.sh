@@ -5,7 +5,7 @@ module load cuda/10.1.243
 
 atlasDir=/scratch/mroeth/tsa/spack/spack-install/tsa/atlas/develop/gcc/2bgfzwgc7pxmx32wojgdthepqli7gng7/
 eckitDir=/scratch/mroeth/tsa/spack/spack-install/tsa/eckit/master/gcc/kcvtp4xpjy7fbk7oz73o45a55jyd2xgv/
-atlasUtilsDir=/scratch/mroeth/tsa/spack/spack-install/tsa/atlas_utilities/master/gcc/lrtmaiwn7mhdhkyxpc7pqbieur2kaxtb
+atlasUtilsDir=/scratch/mroeth/tsa/spack/spack-install/tsa/atlas_utilities/master/gcc/72izoy3gczpi34ld2kfdmg3qzg2uvyxh
 
 atlasInc=${atlasDir}/include
 eckitInc=${eckitDir}/include

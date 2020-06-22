@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fenv.h>
+#include <numeric>
 #include <optional>
 #include <vector>
 
@@ -42,6 +43,24 @@
 #include "atlas_utils/stencils/io/atlasIO.h"
 
 #include "driver-includes/defs.hpp"
+
+#if DAWN_PRECISION == DAWN_SINGLE_PRECISION
+void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
+                   atlasInterface::Field<float>& field, int level, const std::vector<int>& edges)
+#elif DAWN_PRECISION == DAWN_DOUBLE_PRECISION
+void dumpEdgeField(const std::string& fname, const atlas::Mesh& mesh, AtlasToCartesian wrapper,
+                   atlasInterface::Field<float>& field, int level, const std::vector<int>& edges)
+#else
+#error DAWN_PRECISION is invalid
+#endif
+{
+  FILE* fp = fopen(fname.c_str(), "w+");
+  for(auto edgeIdx : edges) {
+    auto [x, y] = wrapper.edgeMidpoint(mesh, edgeIdx);
+    fprintf(fp, "%f %f %f\n", x, y, field(edgeIdx, level));
+  }
+  fclose(fp);
+}
 
 std::string getCmdOption(const char** begin, const char** end, const std::string& option) {
   const char** itr = std::find(begin, end, option);
@@ -84,6 +103,7 @@ int main(int argc, char const* argv[]) {
 
   bool strLayout = false;
   if(cmdOptionExists(argv, argv + argc, "-str")) {
+    printf("using strided layout!\n");
     strLayout = true;
   }
 
@@ -108,6 +128,11 @@ int main(int argc, char const* argv[]) {
   atlas::Mesh mesh;
   if(strLayout) {
     mesh = AtlasStrIndxMesh(nx, ny);
+    // the atlas str index mesh generator does not update the node to edge connectivity
+    // while this conn table is not strictly needed for the computation of the diamond, it is needed
+    // for error measurement (to determine the inner edges). Hence, if this table is not up to date,
+    // wrong errors will be reported
+    atlas::mesh::actions::build_node_to_edge_connectivity(mesh);
   } else {
     mesh = AtlasMeshRect(nx, ny);
   }
@@ -420,8 +445,15 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // dumping a hopefully nice colorful laplacian
   //===------------------------------------------------------------------------------------------===//
-  // dumpEdgeField("diamondLaplICONatlas_out0.txt", mesh, wrapper, nabla2, 0,
-  //               wrapper.innerEdges(mesh));
+  if(debug) {
+    if(strLayout) {
+      dumpEdgeField("diamondLaplICONatlas_outStr.txt", mesh, wrapper, nabla2, 0,
+                    wrapper.innerEdges(mesh));
+    } else {
+      dumpEdgeField("diamondLaplICONatlas_outRect.txt", mesh, wrapper, nabla2, 0,
+                    wrapper.innerEdges(mesh));
+    }
+  }
   // dumpEdgeField("diamondLaplICONatlas_out1.txt", mesh, wrapper, nabla2, 1,
   //               wrapper.innerEdges(mesh));
 
